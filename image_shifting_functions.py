@@ -1,5 +1,5 @@
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('MacOSX')
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter

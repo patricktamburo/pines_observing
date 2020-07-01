@@ -15,6 +15,7 @@ import time
 import datetime
 from image_shifting_functions import *
 from logging_functions import *
+import pandas as pd
 
 class MyEventHandler(PatternMatchingEventHandler):
     def __init__(self, directory,  *args, **kwargs):
@@ -24,7 +25,6 @@ class MyEventHandler(PatternMatchingEventHandler):
         else:
             self.already_created = []
 
-        #pdb.set_trace()
     #Can also have on_moved(self,event) and on_deleted(self,event)...
     def on_created(self, event):
         #Activated when a new yyyymmdd.###.fits file is written.
@@ -32,7 +32,7 @@ class MyEventHandler(PatternMatchingEventHandler):
         filename = event.src_path.split('/')[-1]
         file_size = os.stat(event.src_path).st_size
         while file_size < 4213440:
-            #Let the whole file read out...
+           #Let the whole file read out...
             time.sleep(0.1)
             file_size = os.stat(event.src_path).st_size
         
@@ -64,8 +64,37 @@ class MyEventHandler(PatternMatchingEventHandler):
                 y_seeing = 0
             print('Logging.')
             PINES_logger(x_shift,y_shift,x_seeing,y_seeing,master_coordinates,lines,directory=directory,filename=filename)
+            
+            #To speed things up, PINES_guide.tcl will read average x/y shifts every three images, without having to wait for watchdog to analyze things. 
+            log_filename = directory+directory.split('/')[-2]+'_log.txt'
+            image_shift_filename = directory+'image_shift.txt'
+            #Read in the night's log.
+            df = pd.read_csv(log_filename, names=['Filename', 'Date', 'Target', 'Filt.', 'Exptime', 'Airmass', 'X shift', 'Y shift', 'X seeing', 'Y seeing'], comment='#', header=None)
+            
+            #TODO: This may break if watchdog is running while taking darks/flats, test this behavior. 
+            #If there are less than three measurements, just append 0s to image_shift.txt. 
+            if len(df['X shift']) < 3:
+                with open(image_shift_filename, 'a') as f:
+                    f.write('\n')
+                    f.write('0 0')
+            else:
+                #Otherwise, write the average of the last three shifts in x/y to image_shift.txt.
+                last_three_x = np.array([float(i) for i in df['X shift'][-3:]])
+                last_three_y = np.array([float(i) for i in df['Y shift'][-3:]])
+                avg_x_shift = np.nanmean(last_three_x) #Use nanmean in case any of the last three measurements were nans. 
+                avg_y_shift = np.nanmean(last_three_y)
+                #Make sure the average is not a nan, and that the shift is not too large. Shouldn't be > 30 pixels if PINES_peakup worked properly. 
+                if np.isnan(avg_x_shift) or np.isnan(y_shift) or (abs(avg_x_shift) > 30) or (abs(avg_y_shift) > 30):
+                    with open(image_shift_filename, 'a') as f:
+                        print('Got 3 nans or average shift > 30 pixels, returning 0 shifts.')
+                        f.write('\n')
+                        f.write('0 0')
+                else:
+                    with open(image_shift_filename, 'a') as f:
+                        f.write('\n')
+                        f.write('{} {}'.format(np.round(avg_x_shift,1), np.round(avg_y_shift,1)))
+                pdb.set_trace()
             print('')
-            ### print('Hit the on_created loop')
             pickle.dump(self.already_created,open(directory+'analyzed_files.p','wb'))
         else:
             print('Skipped the on_created loop')
@@ -165,7 +194,6 @@ def PINES_watchdog(date=date_string,seeing=2):
     print('Monitoring {watched_dir}'.format(watched_dir=watched_dir),'for new *.fits files.')
     print('')
     patterns = [file_path+'*.fits']
-    ### event_handler = MyEventHandler(patterns=patterns)
     event_handler = MyEventHandler(directory=file_path,patterns=patterns)
     observer = PollingObserver()
     observer.schedule(event_handler, watched_dir, recursive=False)
