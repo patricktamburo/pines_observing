@@ -8,13 +8,14 @@ import scipy.optimize as opt
 from scipy import signal
 from astropy.modeling import models, fitting
 from astropy.io import fits
-from photutils import DAOStarFinder
-from astropy.stats import sigma_clipped_stats, sigma_clip
+from photutils import DAOStarFinder, Background2D, MedianBackground
+from astropy.stats import sigma_clipped_stats, sigma_clip, SigmaClip
 import pickle 
 from pathlib import Path
 import os
 import time
 from numpy.lib.stride_tricks import as_strided
+from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 
 
 def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg,fwhm):
@@ -35,11 +36,23 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
 
     #Reduce the image. 
     image = (image - dark) / flat
-
+    
+    #Interpolate over bad pixels
+    image[np.where(bpm)] = np.nan
+    kernel = Gaussian2DKernel(x_stddev=1)
+    image = interpolate_replace_nans(image, kernel)
+    
+    #Do a simple 2d background model.
+    box_size=32
+    sigma_clip = SigmaClip(sigma=3.)
+    bkg_estimator = MedianBackground()
+    bkg = Background2D(image, (box_size, box_size), filter_size=(3, 3), sigma_clip=sigma_clip, bkg_estimator=bkg_estimator)
+    image = image - bkg.background
+    
     #Lower the image resolution, to save time doing source detection. 
     binning_factor = 2
     lowres_image = strided_rescale(image,binning_factor)
-    lowres_bpm = strided_rescale(bpm,binning_factor).astype('bool')
+    ###lowres_bpm = strided_rescale(bpm,binning_factor).astype('bool')
 
     #Find stars in the master image. #THIS IS WHERE MOST TIME IS LOST!
     #~4 seconds to run daofind on the image. 
@@ -52,12 +65,9 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     # print('Full res time: ',np.round(t2-t1,1))
 
     #New way: do source detection on half-res image. 
-    #t1 = time.time()
-    avg, med, stddev = sigma_clipped_stats(lowres_image,sigma=3.0,maxiters=3) #Previously maxiters = 5!   
+    avg, med, stddev = sigma_clipped_stats(lowres_image,sigma=3.0,maxiters=3) #Previously maxiters = 5!
     daofind = DAOStarFinder(fwhm=fwhm/binning_factor, threshold=sigma_above_bg*stddev,sky=med,ratio=0.9)
-    new_sources = daofind(lowres_image,mask=lowres_bpm)
-    #t2 = time.time()
-    #print('Half res time: ',np.round(t2-t1,1))
+    new_sources = daofind(lowres_image)
 
     x_centroids = new_sources['xcentroid']
     y_centroids = new_sources['ycentroid']
@@ -80,14 +90,23 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     fluxes = fluxes[use_y]
     peaks = peaks[use_y]
 
-    #Also cut for sharpnesses > 0.4, this seems to eliminate a lot of false detections.
+    #Also cut for sharpnesses > 0.5, this seems to eliminate a lot of false detections.
     use_sharp = np.where(sharpness > 0.5)[0]
     x_centroids  = x_centroids [use_sharp]
     y_centroids  = y_centroids [use_sharp]
     sharpness = sharpness[use_sharp]
     fluxes = fluxes[use_sharp]
     peaks = peaks[use_sharp]
-   
+    
+    
+    #Cut sources in the lower left, if bars are present.
+    use_ll =  np.where((x_centroids > 512/binning_factor) | (y_centroids > 512/binning_factor))
+    x_centroids  = x_centroids [use_ll]
+    y_centroids  = y_centroids [use_ll]
+    sharpness = sharpness[use_ll]
+    fluxes = fluxes[use_ll]
+    peaks = peaks[use_ll]
+    
     #Finally, cut targets whose y centroids are near y = 512 (in full-res images). These are usually bad.
     use_512 = np.where(np.logical_or((y_centroids < 510/binning_factor),(y_centroids > 514/binning_factor)))[0]
     x_centroids  = x_centroids [use_512]
@@ -175,8 +194,9 @@ def guide_star_seeing(subframe):
     return(x_seeing,y_seeing)
 
 def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfinder_fwhm,directory = '',filename = '', 
-                           calibration_path='/Users/obs72/Desktop/PINES_scripts/Calibrations/',input_file = 'input_file.txt'):
-    diagnostic_plot = 0 #Set to true to plot master and check images with sources. 
+                           calibration_path='/Users/obs72/Desktop/PINES_scripts/Calibrations/',input_file = 'input_file.txt', mode='created'):
+
+    diagnostic_plot = 0 #Set to true to plot master and check images with sources.
 
     #Get the check image and its coordinates
     check_path = Path(directory+filename)
@@ -256,39 +276,37 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
         plt.clf()
         plt.close()
 
-    #Get a suitable guide star from the check image to measure its seeing. 
-    # guide_star_cut = np.where((check_x_centroids > 200) & (check_x_centroids < 824) & (check_y_centroids > 200) & (check_y_centroids < 824))[0]
-    # if len(guide_star_cut) != 0:
-    #     brightest_guide_star_ind = np.where(check_fluxes[guide_star_cut] == max(check_fluxes[guide_star_cut]))[0]
-    #     guide_star_x_int = int(check_x_centroids[guide_star_cut][brightest_guide_star_ind])
-    #     guide_star_y_int = int(check_y_centroids[guide_star_cut][brightest_guide_star_ind])
-    #     guide_star_subframe = check_image[guide_star_y_int-15:guide_star_y_int+15,guide_star_x_int-15:guide_star_x_int+15]
-    #     (x_seeing,y_seeing) = guide_star_seeing(guide_star_subframe)
-    # else:
-    #     x_seeing = 'nan'
-    #     y_seeing = 'nan'
+    #IF this is a science image, use reference stars to measure FWHM seeing.
+    if mode == 'created':
+        guide_star_cut = np.where((check_x_centroids > 50) & (check_x_centroids < 975) & (check_y_centroids > 50) & (check_y_centroids < 975))[0]
+        if len(guide_star_cut) != 0:
+            x_seeing_array = np.array([])
+            y_seeing_array = np.array([])
+            #Loop over the potential guide star positions, make cutouts around those positions, and measure the seeing in the subframes.
+            for guide_star_ind in guide_star_cut:
+                guide_star_x_int = int(check_x_centroids[guide_star_ind])
+                guide_star_y_int = int(check_y_centroids[guide_star_ind])
+                guide_star_subframe = check_image[guide_star_y_int-15:guide_star_y_int+15,guide_star_x_int-15:guide_star_x_int+15]
+                (x_seeing,y_seeing) = guide_star_seeing(guide_star_subframe)
+            
+                #Only use sources with believable seeing measurements.
+                if x_seeing > 0.8 and x_seeing < 5.5:
+                    x_seeing_array = np.append(x_seeing_array,x_seeing)
+                    y_seeing_array = np.append(y_seeing_array,y_seeing)
+        
+            print(len(x_seeing_array),"sources used for seeing calc:",np.round(x_seeing_array,2))
+            x_seeing = np.nanmedian(x_seeing_array)
+            y_seeing = np.nanmedian(y_seeing_array)
+        else:
+            print("No sources for seeing calc, returning NaNs.")
+            x_seeing = 'nan'
+            y_seeing = 'nan'
 
-    #Median of FWHM of guide stars to get seeing 
-    # guide_star_cut = np.where((check_x_centroids > 200) & (check_x_centroids < 824) & (check_y_centroids > 200) & (check_y_centroids < 824))[0]
-    guide_star_cut = np.where((check_x_centroids > 50) & (check_x_centroids < 975) & (check_y_centroids > 50) & (check_y_centroids < 975))[0]
-    if len(guide_star_cut) != 0:
-        x_seeing_array = np.array([])
-        y_seeing_array = np.array([])
-        for guide_star_ind in guide_star_cut:
-            guide_star_x_int = int(check_x_centroids[guide_star_ind])
-            guide_star_y_int = int(check_y_centroids[guide_star_ind])
-            guide_star_subframe = check_image[guide_star_y_int-15:guide_star_y_int+15,guide_star_x_int-15:guide_star_x_int+15]
-            (x_seeing,y_seeing) = guide_star_seeing(guide_star_subframe)
-            x_seeing_array = np.append(x_seeing_array,x_seeing)
-            y_seeing_array = np.append(y_seeing_array,y_seeing)
-        print(len(guide_star_cut),"sources used for seeing calc:",np.round(x_seeing_array,2))
-        x_seeing = np.nanmedian(x_seeing_array)
-        y_seeing = np.nanmedian(y_seeing_array)
-    else:
-        print("No sources for seeing calc, returning NaNs.")
+    #If it's a test image, skip the seeing measurement to save time.
+    elif mode == 'modified':
+        print('Test image, skipping seeing measurment.')
         x_seeing = 'nan'
         y_seeing = 'nan'
-
         
     #Make sure large shifts aren't reported.
     if (abs(x_shift) > 200) or (abs(y_shift) > 200):
@@ -320,9 +338,5 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
         f = open(directory+'image_shift.txt','w')
         f.write(str(ra_shift)+' '+str(dec_shift)+' '+trimmed_target_name+' '+str(max_seeing))
         f.close()
-        #break #No need to keep looping, you already found the match!
 
-    #if match == False:
-    #    print('No matching master image found! Do you have a master for this field?')
-    #else: 
     return(x_shift,y_shift,x_seeing,y_seeing)

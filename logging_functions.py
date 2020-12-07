@@ -9,9 +9,6 @@ def PINES_logger(x_shift, y_shift, x_seeing, y_seeing, master_coordinates, lines
     image_path = Path(directory+filename)
     image_hdul = fits.open(image_path)
     image_header = image_hdul[0].header
-
-    
-
     filename = image_header['FILENAME']
     exptime = image_header['EXPTIME']
     date = image_header['DATE']
@@ -21,6 +18,12 @@ def PINES_logger(x_shift, y_shift, x_seeing, y_seeing, master_coordinates, lines
     if obs_type == 'OBJECT':
         if image_header['FILTNME2'].strip() == 'Dark':
             target_name = 'Dark'
+            #Log 0's for shifts and seeing if the image is a dark.
+            x_shift = 0
+            y_shift = 0
+            x_seeing = 0
+            y_seeing = 0
+        
         elif exptime < 1:
             target_name = 'Flat'
         else:

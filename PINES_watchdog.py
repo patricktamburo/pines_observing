@@ -27,6 +27,7 @@ class MyEventHandler(PatternMatchingEventHandler):
 
     #Can also have on_moved(self,event) and on_deleted(self,event)...
     def on_created(self, event):
+        global daostarfinder_fwhm
         #Activated when a new yyyymmdd.###.fits file is written.
         directory = os.path.dirname(event.src_path)+'/'
         filename = event.src_path.split('/')[-1]
@@ -42,10 +43,10 @@ class MyEventHandler(PatternMatchingEventHandler):
         #previous files from tonight in random order. 
         if event.src_path not in self.already_created:
             self.already_created.append(event.src_path)
-            logging.info("File %s was just created." % event.src_path)
+            logging.info("%s created." % event.src_path)
             #Calculate shift from master image (for guiding purposes). 
 
-            #Search for a matching master_dark file. 
+            #Search for a matching maser_dark file.
             exptime = fits.open(directory+filename)[0].header['EXPTIME']
             dark_path = calibration_path+'Darks/master_dark_'+str(exptime)+'.fits'
             if os.path.isfile(dark_path):
@@ -53,7 +54,6 @@ class MyEventHandler(PatternMatchingEventHandler):
             else:
                 print('No master_dark file found matching the exposure time of '+str(exptime)+' seconds in '+calibration_path+'.')
                 print('You need to make one!')
-            #This will crash if you take a calibration image, not science!
             if exptime >= 1:
                 (x_shift,y_shift,x_seeing,y_seeing) = image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfinder_fwhm, directory=directory,filename=filename)
             else:
@@ -62,42 +62,57 @@ class MyEventHandler(PatternMatchingEventHandler):
                 y_shift = 0
                 x_seeing = 0
                 y_seeing = 0
-            print('Logging.')
-            PINES_logger(x_shift,y_shift,x_seeing,y_seeing,master_coordinates,lines,directory=directory,filename=filename)
+            #print('Logging.')
+            PINES_logger(x_shift,y_shift,x_seeing,y_seeing,master_coordinates,lines,directory=directory,filename=filename, mode='created')
             
             #To speed things up, PINES_guide.tcl will read average x/y shifts every three images, without having to wait for watchdog to analyze things. 
             log_filename = directory+directory.split('/')[-2]+'_log.txt'
             image_shift_filename = directory+'image_shift.txt'
             #Read in the night's log.
             df = pd.read_csv(log_filename, names=['Filename', 'Date', 'Target', 'Filt.', 'Exptime', 'Airmass', 'X shift', 'Y shift', 'X seeing', 'Y seeing'], comment='#', header=None)
-            
-            #TODO: This may break if watchdog is running while taking darks/flats, test this behavior. 
+
+            #TODO: This may break if watchdog is running while taking darks/flats, test this behavior.
             #If there are less than three measurements, just append 0s to image_shift.txt. 
             if len(df['X shift']) < 3:
                 with open(image_shift_filename, 'a') as f:
                     f.write('\n')
                     f.write('0 0')
             else:
-                #Otherwise, write the average of the last three shifts in x/y to image_shift.txt.
+                #Otherwise, write the median of the last three shifts in x/y to image_shift.txt.
                 last_three_x = np.array([float(i) for i in df['X shift'][-3:]])
                 last_three_y = np.array([float(i) for i in df['Y shift'][-3:]])
-                avg_x_shift = np.nanmean(last_three_x) #Use nanmean in case any of the last three measurements were nans. 
-                avg_y_shift = np.nanmean(last_three_y)
-                #Make sure the average is not a nan, and that the shift is not too large. Shouldn't be > 30 pixels if PINES_peakup worked properly. 
-                if np.isnan(avg_x_shift) or np.isnan(y_shift) or (abs(avg_x_shift) > 30) or (abs(avg_y_shift) > 30):
+                
+                med_x_shift = np.nanmedian(last_three_x) #Use nanmedian in case any of the last three measurements were nans.
+                med_y_shift = np.nanmedian(last_three_y)
+                
+                print('')
+                print('Last 3 x shifts: {}, median = {:3.1f} pix ({:3.1f}")'.format(last_three_x, med_x_shift, med_x_shift*0.579))
+                print('Last 3 y shifts: {}, median = {:3.1f} pix ({:3.1f}")'.format(last_three_y, med_y_shift, med_y_shift*0.579))
+                
+                #Make sure the median is not a nan, and that the shift is not too large. Shouldn't be > 100 pixels if PINES_peakup worked properly.
+                if np.isnan(med_x_shift) or np.isnan(med_y_shift) or (abs(med_x_shift) > 100) or (abs(med_y_shift) > 100):
                     with open(image_shift_filename, 'a') as f:
-                        print('Got 3 nans or average shift > 30 pixels, returning 0 shifts.')
+                        print('Got 3 nans or median shift > 100 pixels, returning 0 shifts.')
                         f.write('\n')
                         f.write('0 0')
                 else:
                     with open(image_shift_filename, 'a') as f:
                         f.write('\n')
-                        f.write('{} {}'.format(np.round(avg_x_shift,1), np.round(avg_y_shift,1)))
-                pdb.set_trace()
+                        f.write('{} {}'.format(np.round(med_x_shift*0.579,1), np.round(med_y_shift*0.579,1)))
+                            
+            #Update source detection fwhm value as night progresses.
+            if len(df['X seeing']) >= 3:
+                last_three_seeing = np.array([float(i) for i in df['X seeing'][-3:]])
+                avg_seeing = np.nanmean(last_three_seeing)
+                
+                print('Last 3 seeing FWHMs: {}, average = {:1.1f}"'.format(last_three_seeing, avg_seeing))
+
+                if (not np.isnan(avg_seeing)) and (avg_seeing != 0):
+                    #print('Updating source detection seeing to {}".'.format(np.round(avg_seeing,1)))
+                    daostarfinder_fwhm = avg_seeing*2.355/0.579
+
             print('')
             pickle.dump(self.already_created,open(directory+'analyzed_files.p','wb'))
-        else:
-            print('Skipped the on_created loop')
 
         
     def on_modified(self, event):
@@ -115,7 +130,7 @@ class MyEventHandler(PatternMatchingEventHandler):
                 print('No master_dark file found matching the exposure time of '+str(exptime)+' seconds in '+calibration_path+'.')
                 print('You need to make one!')
             super(MyEventHandler, self).on_modified(event)
-            logging.info("File %s was just modified." % event.src_path)
+            logging.info("%s modified." % event.src_path)
             #Calculate shift between test and master image. 
             if exptime >= 1:
                 (x_shift,y_shift,x_seeing,y_seeing) = image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfinder_fwhm, directory=directory,filename=filename)
@@ -170,10 +185,12 @@ global dark, flat, bpm, calibration_path
 calibration_path = '/Users/obs72/Desktop/PINES_scripts/Calibrations/'
 flat_path = calibration_path+'Flats/master_flat_J.fits'
 flat = fits.open(flat_path)[0].data[0:1024,:]
-bpm_path = calibration_path+'Bad_pixel_masks/bpm.p'
-bpm = (1-pickle.load(open(bpm_path,'rb'))).astype('bool')
+###bpm_path = calibration_path+'Bad_pixel_masks/bpm.p'
+###bpm = (1-pickle.load(open(bpm_path,'rb'))).astype('bool')
+bpm_path = calibration_path+'Bad_pixel_masks/bpm.fits'
+bpm = fits.open(bpm_path)[0].data
 
-def PINES_watchdog(date=date_string,seeing=2):
+def PINES_watchdog(date=date_string,seeing=2.3):
     '''PURPOSE:
             Monitors a data directory for new .fits images. 
         INPUTS:
