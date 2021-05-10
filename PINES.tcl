@@ -11,20 +11,20 @@ proc PINES_setMimir {} {
 
     puts "PINES_mimirset configures Mimir for PINES observations."
 
-    puts "Moving slit out of the field..."
-    slit pos=100
-    slit -home
+    #puts "Moving slit out of the field..."
+    #slit pos=100
+    #slit -home
 
-    puts "Moving decker out of the field..."
-    decker pos=100
-    decker -home
+    #puts "Moving decker out of the field..."
+    #decker pos=100
+    #decker -home
 
-    puts "Setting up F/5 camera..."
-    Cam_Home
-    Cam_F5
+    #puts "Setting up F/5 camera..."
+    #Cam_Home
+    #Cam_F5
     
-    puts "Switching to H-band..."
-    set_H
+    puts "Switching to J band..."
+    set_J
 
     puts "PINES_mimirset COMPLETE."
 
@@ -39,14 +39,33 @@ proc PINES_setMimir {} {
 
 proc PINES_repoint {xnow ynow} {
 
-    puts "Moving object at (xnow,ynow) to (705,386)"
-    recenter $xnow $ynow 705 386 0.579
+    puts "Moving object at (xnow,ynow) to (700,382)"
+    recenter $xnow $ynow 700 382 0.579
 
     puts "Taking 1 second test exposure..."
     test etime=1 nexp=1 {comment1=} {comment2=}
 
     puts "PINES_repoint COMPLETE."
-    puts "If target is now near (705,386), update pointing with UC then U (MOVE)."
+    puts "If target is now near (700,382), update pointing with UC then U (MOVE)."
+
+    #Three quarks for muster mark.
+    for {set i 0} {$i < 3} {incr i} {
+	puts \a\a
+	after 300
+    }
+
+}
+
+proc PINES_mov2cor {xnow ynow} {
+
+    puts "Moving object at (xnow,ynow) to (100,924)"
+    recenter $xnow $ynow 100 924 0.579
+
+    puts "Taking 1 second test exposure..."
+    test etime=1 nexp=1 {comment1=} {comment2=}
+
+    puts "PINES_move2corner COMPLETE."
+    puts "Examine object elongation and adjust focus accordingly."
 
     #Three quarks for muster mark.
     for {set i 0} {$i < 3} {incr i} {
@@ -71,8 +90,8 @@ proc PINES_domeflat {expt nexp} {
     puts "Waiting 10 seconds for lamp to warm up..."
     after 10000
 
-    set_H
-    puts "Acquiring H flats lights on..."	    
+    set_J
+    puts "Acquiring J-band flats lights on..."	    
     go etime=$expt title=dome_lamp_on nexp=$nexp {comment1=} {comment2=}
     
     if { [ abort_test ] == $atest } {
@@ -86,7 +105,7 @@ proc PINES_domeflat {expt nexp} {
     puts "Waiting 10 seconds for lamp to cool down..."
     after 10000
     
-    puts "Acquiring H flats lights off..."	    
+    puts "Acquiring J flats lights off..."	    
     go etime=$expt title=dome_lamp_off nexp=$nexp {comment1=} {comment2=}
     
     if { [ abort_test ] == $atest } {
@@ -129,8 +148,8 @@ proc PINES_darks {expt1 expt2 expt3 nexp} {
 	go etime=$expt3 title=dark nexp=$nexp {comment1=} {comment2=}
     }
 
-    puts "Returning to H-band filter..."
-    set_H 
+    puts "Returning to J-band filter..."
+    set_J 
 
     puts "PINES_darks complete."
 
@@ -161,11 +180,11 @@ proc PINES_watchdog_get {start_file_time} {
 
     set pines_date [PINES_get_date]
     
-    puts "Waiting until PINES_watchdog calculates shift/fwhm (10 sec timeout)..."
+    puts "Waiting until PINES_watchdog calculates shift/fwhm (15 sec timeout)..."
     set start_wait_time [ clock seconds ]
     set current_wait_time [ clock seconds ]
     set current_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
-    while { $current_wait_time < $start_wait_time + 10 && $current_file_time == $start_file_time } {
+    while { $current_wait_time < $start_wait_time + 15 && $current_file_time == $start_file_time } {
 	#Pause for 0.1 second within forloop to slow it down
 	after 100
 	set current_wait_time [ clock seconds ]
@@ -177,16 +196,31 @@ proc PINES_watchdog_get {start_file_time} {
     
     puts "Reading in text written by python program..."
     set fid [open /mimir/data/obs72/$pines_date/image_shift.txt r]
-    set text [read $fid]
-    close $fid
+
+    #Read first line of image_shift.txt
+    #set text [gets $fid]
+    gets $fid text
     set list [split $text " "]
     
     set d_ra [expr [lindex $list 0]]
     set d_dec [expr [lindex $list 1]]
     set name [lindex $list 2]
     set fwhm [lindex $list 3]
+
+    #Read the second line of image_shift.txt if it exists
+    #set text2 [gets $fid]
+    gets $fid text2
+    if { $text2 == ""
+    } then { set d_ra_median 0.0
+	set d_dec_median 0.0
+    } else { set list2 [split $text2 " "]    
+	set d_ra_median [expr [lindex $list2 0]]
+	set d_dec_median [expr [lindex $list2 1]]
+    }
+
+    close $fid
     
-    return [list $d_ra $d_dec $name $fwhm]
+    return [list $d_ra $d_dec $name $fwhm $d_ra_median $d_dec_median]
 
 }
 
@@ -284,7 +318,7 @@ proc PINES_peakup {expt} {
 
     puts "STARTING PINES_peakup..."
 
-    set prop 0.9
+    set prop 1.0
 
     #set maximum move for peak up in arcseconds
     set limit 300
@@ -292,78 +326,50 @@ proc PINES_peakup {expt} {
     #put zeros into old file
     exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
 
-    #save time the file was modified
-    set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+    #take exposure and move tele 3 times, exit for loop is separation is good
+    for {set i 0} {$i < 4} {incr i} {
 
-    puts "Taking a test exposure..."	    
-    test etime=$expt nexp=1 {comment1=} {comment2=}
+	#save time the file was modified
+	set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
 
-    #read output from PINES_watchdog
-    set data [PINES_watchdog_get $start_file_time]
-    set d_ra [expr [lindex $data 0]]
-    set d_dec [expr [lindex $data 1]]
-    set target_name [lindex $data 2]
-    set fwhm [lindex $data 3]
+	puts "Taking a test exposure..."	    
+	test etime=$expt nexp=1 {comment1=} {comment2=}
 
-    puts [concat "Target name is" $target_name "."]
+	#read output from PINES_watchdog
+	set data [PINES_watchdog_get $start_file_time]
+	set d_ra [expr [lindex $data 0]]
+	set d_dec [expr [lindex $data 1]]
+	set target_name [lindex $data 2]
+	set fwhm [lindex $data 3]
 
-    #Move if the suggested motion is good
+	puts [concat "Target name is" $target_name "."]
 
-    if {[expr abs($d_ra)] == 0 && [expr abs($d_dec)] == 0
-    } then {puts "Suggested RA and DEC moves equal to 0. PINES_watchdog likely failed. Move not executed."
-    } elseif { [expr abs($d_ra)] < $limit && [expr abs($d_dec)] < $limit 
-	   } then {concat "Moving telescope" [expr $d_ra * $prop] "arcsec in RA and" [expr $d_ra * $prop] "in DEC..."
-	rmove d_ra=[expr $d_ra * $prop] d_dec=[expr $d_dec * $prop]	
-    } else {puts [concat "Suggested RA or DEC move greater than" $limit "arcsec limit. Move not executed."]}
-
-    #Now run a second time    
-    #save time the file was last modified
-    set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
-
-    puts "Taking a test exposure..."	    
-    test etime=$expt nexp=1 title=$target_name {comment1=} {comment2=}
-
-    #read output from PINES_watchdog
-    set data [PINES_watchdog_get $start_file_time]
-    set d_ra [expr [lindex $data 0]]
-    set d_dec [expr [lindex $data 1]]
-    set target_name [lindex $data 2]
-    set fwhm [lindex $data 3]
-
-    puts [concat "Target name is" $target_name "."]
-
-    if {[expr abs($d_ra)] == 0 && [expr abs($d_dec)] == 0
-    } then {puts "Suggested RA and DEC moves equal to 0. PINES_watchdog likely failed. Move not executed."
-    } elseif { [expr abs($d_ra)] < $limit && [expr abs($d_dec)] < $limit 
-	   } then {concat "Moving telescope" [expr $d_ra * $prop] "arcsec in RA and" [expr $d_ra * $prop] "in DEC..."
-	rmove d_ra=[expr $d_ra * $prop] d_dec=[expr $d_dec * $prop]	
-    } else {puts [concat "Suggested RA or DEC move greater than" $limit "arcsec limit. Move not executed."]}
+	set separation [expr sqrt(pow($d_ra,2) + pow($d_dec,2))]
     
+	if {$separation == 0 
+	} then { puts "PINES_watchdog not able to calculate shift, returned 0 0."
+	} elseif {$separation < 2.0
+	} then { puts "PINES_peakup successful, target within 2 arcseconds of master position."
+	    set success 1
+	    break
+	} else {puts [concat "Target" $separation "arcseconds away from master position."]}
 
-    #Now run a third time to test for success
-    #save time the file was last modified
-    set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+	if {$i == 3
+	} then { puts [concat "PINES_peakup unsuccessful, target" $separation "arcseconds away from master position."]
+	    set success -1
+	    break
+	} 
 
-    puts "Taking a test exposure..."	    
-    test etime=$expt nexp=1 title=$target_name {comment1=} {comment2=}
+	#Move if the suggested motion is good
 
-    #read output from PINES_watchdog
-    set data [PINES_watchdog_get $start_file_time]
-    set d_ra [expr [lindex $data 0]]
-    set d_dec [expr [lindex $data 1]]
-    set target_name [lindex $data 2]
-    set fwhm [lindex $data 3]
+	if {[expr abs($d_ra)] == 0 && [expr abs($d_dec)] == 0
+	} then {puts "Suggested RA and DEC moves equal to 0. PINES_watchdog likely failed. Move not executed."
+	} elseif { [expr abs($d_ra)] < $limit && [expr abs($d_dec)] < $limit 
+	       } then {concat "Moving telescope" [expr $d_ra * $prop] "arcsec in RA and" [expr $d_ra * $prop] "in DEC..."
+	    rmove d_ra=[expr $d_ra * $prop] d_dec=[expr $d_dec * $prop]	
+	} else {puts [concat "Suggested RA or DEC move greater than" $limit "arcsec limit. Move not executed."]}
+    }
 
-    set separation [expr sqrt(pow($d_ra,2) + pow($d_dec,2))]
-    
-    if {$separation == 0
-    } then { puts "PINES_peakup unsuccessful.  PINES_watchdog returning 0 0."
-	set success -1
-    } elseif { $separation < 10.0
-	   } then { puts "PINES_peakup successful, target within 10 arcseconds of master position."
-	set success 1
-    } else {puts [concat "PINES_peakup unsuccessful, target" $separation "arcseconds away from master position."]
-	set success -1}
     
     puts "PINES_peakup COMPLETE."
 
@@ -382,29 +388,41 @@ proc PINES_guide {expt total_time} {
     puts "STARTING PINES_guide..."
 
     set pines_date [PINES_get_date]
-    set prop 0.9
 
-    #put zeros into old file
-    exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+    # set target name to be whatever is in image_shift currently
+    set fid [open /mimir/data/obs72/$pines_date/image_shift.txt r]
+    set text [gets $fid]
+    close $fid
+    set list [split $text " "]
+    set target_name [lindex $list 2]
+ 
+    # #put zeros into old file
+    # exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
 
-    #save time the file was modified
-    set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+    # #save time the file was modified
+    # set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
 
-    puts "Taking a test exposure to get target name..."	    
-    test etime=1 nexp=1 {comment1=} {comment2=}
+    # puts "Taking a test exposure to get target name..."	    
+    # test etime=1 nexp=1 {comment1=} {comment2=}
 
-    #read output from PINES_watchdog
-    set data [PINES_watchdog_get $start_file_time]
-    set d_ra [expr [lindex $data 0]]
-    set d_dec [expr [lindex $data 1]]
-    set target_name [lindex $data 2]
-    set fwhm [lindex $data 3]
+    # #read output from PINES_watchdog
+    # set data [PINES_watchdog_get $start_file_time]
+    # set d_ra [expr [lindex $data 0]]
+    # set d_dec [expr [lindex $data 1]]
+    # set target_name [lindex $data 2]
+    # set fwhm [lindex $data 3]
 
     puts [concat "Target name is" $target_name "."]
 
     #set limits for guiding corrections in arcseconds
-    set lower_limit 1.5
-    set upper_limit 60.0
+    set upper_limit 10.0
+    set lower_limit 0.5
+
+    #set guiding coefficients
+    set prop 1.0
+    set integ 0.1
+    set integrated_ra_error 0.0
+    set integrated_dec_error 0.0
     
     #get start time
     set start_time [ clock seconds ]
@@ -418,65 +436,56 @@ proc PINES_guide {expt total_time} {
     set current_time [ clock seconds ]
 
     #start while loop
-    while {$current_time < $start_time + $total_time - $expt} {
+    while {$current_time < $start_time + $total_time - $expt/2} {
 
-        #put zeros into old file (in case watchdog hanges, won't slew)
-        exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
-        #save time the file was modified
-        set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+        # #put zeros into old file (in case watchdog hanges, won't slew)
+        # exec echo 0.0 0.0 $target_name 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+        # #save time the file was modified
+        # set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
 
 	#take exposure
 	puts [concat "Taking exposure for" $expt "seconds"]
         go etime=$expt nexp=1 title=$target_name {comment1=} {comment2=}
-  
-	#read output from PINES_watchdog
+
+        # #put zeros into old file (in case watchdog hanges, won't slew)
+        exec echo 0.0 0.0 $target_name 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+
+        #save time the last file was modified immediately after the exposure ends
+        set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+
+        #get current time
+	set current_time [ clock seconds ]
+	#if time is up, jump out of loop (don't bother calculating offset)
+	if {$current_time > $start_time + $total_time - $expt/2 - 10
+	} then {break}
+ 
+	# #read output from PINES_watchdog (will be from previous image)
 	set data [PINES_watchdog_get $start_file_time]
 	set d_ra [expr [lindex $data 0]]
 	set d_dec [expr [lindex $data 1]]
 	set target_name [lindex $data 2]
 	set fwhm [lindex $data 3]
+	set d_ra_median [lindex $data 4]
+	set d_dec_median [lindex $data 5]
 
-	#append these values to lists
-	lappend d_ra_list $d_ra
-	lappend d_dec_list $d_dec
-	
-	puts [concat $d_ra $d_dec]
+	set separation [expr sqrt(pow($d_ra,2) + pow($d_dec,2))]
 
-        # every 3rd exposure, see if target has drifted
-        if {$index % 3 == 0} {
+	#If the separation is within the lower and upper limits, then slew the telescope
+	if {$separation > $lower_limit && $separation < $upper_limit
+	} then {
+	    set integrated_ra_error [expr $integrated_ra_error + $d_ra]
+	    set integrated_dec_error [expr $integrated_dec_error + $d_dec]	    
+	    puts [concat "Moving "  [expr $prop * $d_ra + $integ * $integrated_ra_error] "," [expr $prop * $d_dec + $integ * $integrated_dec_error] " arcsec..."]
+	    rmove d_ra=[expr $prop * $d_ra + $integ * $integrated_ra_error] d_dec=[expr $prop * $d_dec + $integ * $integrated_dec_error]
+	} else {puts [concat "Offset of"  [expr $d_ra] "," [expr $d_dec] "outside of allowable ranges for guiding."]}
 
-	    #take mean of last three ra and dec suggestions
-	    # set d_ra_1 [lindex $d_ra_list end]
-	    # set d_ra_2 [lindex $d_ra_list end-1] 
-	    # set d_ra_3 [lindex $d_ra_list end-2]
-	    # set d_ra_mean [expr ($d_ra_1 + $d_ra_2 + $d_ra_3) / 3]
-
-	    # set d_dec_1 [lindex $d_dec_list end]
-	    # set d_dec_2 [lindex $d_dec_list end-1] 
-	    # set d_dec_3 [lindex $d_dec_list end-2]
-	    # set d_dec_mean [expr ($d_dec_1 + $d_dec_2 + $d_dec_3) / 3]
-
-	    #take median of last three ra and dec suggestions
-	    set d_ra_median [lindex [lsort -real [lrange $d_ra_list end-2 end]] 1]
-	    set d_dec_median [lindex [lsort -real [lrange $d_dec_list end-2 end]] 1]
-
-            # if {[expr abs($d_ra_median)] > $lower_limit || [expr abs($d_dec_median)] > $lower_limit
-            # } then {puts [concat "Moving telescope median of last three suggestions: " [expr $d_ra_median * $prop] "arcsec in RA and" [expr $d_dec_median * $prop] "arcsec in Dec..."]
-	    # 	            rmove d_ra=[expr $d_ra_median * $prop] d_dec=[expr $d_dec_median * $prop]
-            # } else {puts [concat "Median of last three suggestions less than" $lower_limit "arcsec lower_limit. Move not executed..."]}
-
-	    if {[expr abs($d_ra_median)] > $lower_limit && [expr abs($d_ra_median)] < $upper_limit
-	    } then {puts [concat "Moving telescope median of last three suggestions: " [expr $d_ra_median * $prop] "arcsec in RA..."]
-		rmove d_ra=[expr $d_ra_median * $prop]
-	    } else {puts [concat "Median of last three RA suggestions" [expr $d_ra_median] "arcsec outside guide limits."]}
-
-	    if {[expr abs($d_dec_median)] > $lower_limit && [expr abs($d_dec_median)] < $upper_limit
-	    } then {puts [concat "Moving telescope median of last three suggestions: " [expr $d_dec_median * $prop] "arcsec in DEC..."]
-		rmove d_dec=[expr $d_dec_median * $prop]
-	    } else {puts [concat "Median of last three DEC suggestions" [expr $d_dec_median] "arcsec outside guide limits."]}
-
-
-        }
+	#if there was an RA slip, correct the full amount without the prop of integ components
+	if {[expr abs($d_ra)] > $upper_limit && [expr $d_ra] > -90 && [expr $d_ra] < -40  && [expr abs($d_dec_median)] < $upper_limit
+	} then {
+	    
+	    puts [concat "RA slip detected, moving "  [expr $d_ra ] "," [expr $d_dec] " arcsec..."]
+	    rmove d_ra=[expr $d_ra] d_dec=[expr $d_dec]
+	}
 
         #get current time
 	set current_time [ clock seconds ]
@@ -550,7 +559,7 @@ proc PINES_lst {} {
 }
 
 #program to cycle through a group of targets
-proc PINES_group {file start_num peakup_expt} {
+proc PINES_group {file start_num peakup_expt time_per_star} {
 
     puts "STARTING PINES_group..."
 
@@ -604,6 +613,13 @@ proc PINES_group {file start_num peakup_expt} {
 	#calculate hour angle
 	set ha [expr [PINES_lst] - $ra_deg]
 
+	if {[expr $ha] < -12
+	} then { set ha [expr $ha + 24.0] }
+
+	if {[expr $ha] > 12
+	} then { set ha [expr $ha - 24.0] }
+
+
 	if {[expr abs($ha)] > 4.25
 	} then { puts [concat "Hour Angle of" $ha "greater than 4.25. Move not executed."]
 	} elseif { $ha < 0.0 && $dec_deg > 35.0
@@ -623,7 +639,7 @@ proc PINES_group {file start_num peakup_expt} {
 		break
 	    } else {puts "PINES_peakup successful. Running PINES_guide."}
     
-	    PINES_guide $expt 600
+	    PINES_guide $expt $time_per_star
 	    
 	}
     }
