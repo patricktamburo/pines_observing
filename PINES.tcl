@@ -80,8 +80,6 @@ proc PINES_domeflat {expt nexp} {
     #turn logging off
     Logging_OFF
     
-    #code for abort
-    set atest {abort}
     
     #turn lights on (should already be on to determine exp times)
     puts "Turning dome flat lamps on..."
@@ -94,11 +92,6 @@ proc PINES_domeflat {expt nexp} {
     puts "Acquiring J-band flats lights on..."	    
     go etime=$expt title=dome_lamp_on nexp=$nexp {comment1=} {comment2=}
     
-    if { [ abort_test ] == $atest } {
-	log_1 {Abort after Darks}
-	return error
-    }
-    
     #turn lights off
     domeflat_off
 
@@ -108,11 +101,6 @@ proc PINES_domeflat {expt nexp} {
     puts "Acquiring J flats lights off..."	    
     go etime=$expt title=dome_lamp_off nexp=$nexp {comment1=} {comment2=}
     
-    if { [ abort_test ] == $atest } {
-	log_1 {Abort after Darks}
-	return error
-    }
-
 
     #take a test to reset the comments
     puts "Taking a test exposure to reset comments..."	    
@@ -126,6 +114,26 @@ proc PINES_domeflat {expt nexp} {
 	after 300
     }
 
+
+}
+
+proc PINES_linearity {} {
+    
+  PINES_domeflat 1.0 20
+  PINES_domeflat 2.0 20
+  PINES_domeflat 3.0 20
+  PINES_domeflat 4.0 20
+  PINES_domeflat 5.0 20
+  PINES_domeflat 6.0 20
+  PINES_domeflat 7.0 20
+  PINES_domeflat 8.0 20
+  PINES_domeflat 9.0 20
+  PINES_domeflat 10.0 20
+  PINES_domeflat 11.0 20
+  PINES_domeflat 12.0 20
+  PINES_domeflat 13.0 20
+  PINES_domeflat 14.0 20
+  PINES_domeflat 15.0 20
 
 }
 
