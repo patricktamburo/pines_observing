@@ -42,38 +42,68 @@ def PINES_logger(x_shift, y_shift, x_seeing, y_seeing, master_coordinates, lines
             target_name = lines[min_distance_loc].split(', ')[1].split('\n')[0]
     else:
         targ_name = ' '
+    #Generate a line of text for the log. This isn't elegant but it works.
     if x_shift != 'nan':
-        #log_text = filename+', '+date+', '+target_name+', '+filter_name+', '+str(exptime)+', '+str(airmass)+'\n'
-        
         if x_seeing != 'nan':
-            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}\n'.format(filename, date, target_name, 
-                                                                                                       filter_name,str(exptime),
-                                                                                                       str(airmass),str(np.round(x_shift,1)),
-                                                                                                       str(np.round(y_shift,1)),
-                                                                                                       str(np.round(x_seeing,1)),
-                                                                                                       str(np.round(y_seeing,1)))
+            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}, {:<20}, {:<20}\n'.format(filename,
+                                                                                                                           date,
+                                                                                                                           target_name,
+                                                                                                                           filter_name,
+                                                                                                                           str(exptime),
+                                                                                                                           str(airmass),
+                                                                                                                           str(np.round(x_shift,1)),
+                                                                                                                           str(np.round(y_shift,1)),
+                                                                                                                           str(np.round(x_seeing,1)),
+                                                                                                                           str(np.round(y_seeing,1)),
+                                                                                                                           '0',
+                                                                                                                           '0')
         else:
-            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}\n'.format(filename, date, target_name, 
-                                                                                                       filter_name,str(exptime),
-                                                                                                       str(airmass),str(np.round(x_shift,1)),
-                                                                                                       str(np.round(y_shift,1)),
-                                                                                                       x_seeing,y_seeing)
+            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}, {:<20}, {:<20}\n'.format(filename,
+                                                                                                                           date,
+                                                                                                                           target_name,
+                                                                                                                           filter_name,
+                                                                                                                           str(exptime),
+                                                                                                                           str(airmass),
+                                                                                                                           str(np.round(x_shift,1)),
+                                                                                                                           str(np.round(y_shift,1)),
+                                                                                                                           x_seeing,
+                                                                                                                           y_seeing,
+                                                                                                                           '0',
+                                                                                                                           '0')
     else:
         if x_seeing != 'nan':
-            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}\n'.format(filename, date, target_name, filter_name,
-                                                                                    str(exptime),str(airmass),x_shift,y_shift,
-                                                                                                      str(np.round(x_seeing,1)), str(np.round(y_seeing,1)))
+            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}, {:<20}, {:<20}\n'.format(filename,
+                                                                                                                           date,
+                                                                                                                           target_name,
+                                                                                                                           filter_name,
+                                                                                                                           str(exptime),
+                                                                                                                           str(airmass),
+                                                                                                                           x_shift,
+                                                                                                                           y_shift,
+                                                                                                                           str(np.round(x_seeing,1)),
+                                                                                                                           str(np.round(y_seeing,1)),
+                                                                                                                           '0',
+                                                                                                                           '0')
 
         else:
-            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}\n'.format(filename, date, target_name, 
-                                                                                                       filter_name,str(exptime),
-                                                                                                       str(airmass),x_shift,y_shift,
-                                                                                                       x_seeing,y_seeing)
+            log_text = ' {:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}, {:<20}, {:<20}\n'.format(filename,
+                                                                                                                           date,
+                                                                                                                           target_name,
+                                                                                                                           filter_name,
+                                                                                                                           str(exptime),
+                                                                                                                           str(airmass),
+                                                                                                                           x_shift,
+                                                                                                                           y_shift,
+                                                                                                                           x_seeing,
+                                                                                                                           y_seeing,
+                                                                                                                           '0',
+                                                                                                                           '0')
                                                                                                            
     log_filename = directory.split('/')[-2]+'_log.txt'
     with open(directory+log_filename, 'a') as myfile:
+        #If the log has just been created, add a header line specifying the contents of each column.
         if os.stat(directory+log_filename).st_size == 0:
-            header_text = '#{:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<8}, {:<8}\n'.format('Filename', 'Date', 'Target', 'Filt.','Exptime','Airmass','X shift', 'Y shift', 'X seeing','Y seeing')
+            header_text = '#{:<19}, {:<20}, {:<30}, {:<6}, {:<8}, {:<8}, {:<8}, {:<8}, {:<9}, {:<9}, {:<20}, {:<20}\n'.format('Filename','Date','Target','Filt.','Exptime','Airmass','X shift','Y shift','X seeing','Y seeing','Post-processing flag','Shift quality flag')
             myfile.write(header_text)
         myfile.write(log_text)  
     myfile.close()
