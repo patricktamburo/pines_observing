@@ -16,6 +16,7 @@ import datetime
 from image_shifting_functions import *
 from logging_functions import *
 import pandas as pd
+from glob import glob
 
 class MyEventHandler(PatternMatchingEventHandler):
     def __init__(self, directory,  *args, **kwargs):
@@ -31,12 +32,19 @@ class MyEventHandler(PatternMatchingEventHandler):
         #Activated when a new yyyymmdd.###.fits file is written.
         directory = os.path.dirname(event.src_path)+'/'
         filename = event.src_path.split('/')[-1]
+        #These lines are needed to force the OS to recognize that a test.fits file has been written out.
+        #Without them, things get hung up for >~ 1 minute.
+        if filename == 'test.fits':
+            time.sleep(4)
+            im_force_open = fits.open(event.src_path)
+            return
+                
         file_size = os.stat(event.src_path).st_size
         while file_size < 4213440:
            #Let the whole file read out...
             time.sleep(0.1)
             file_size = os.stat(event.src_path).st_size
-        
+    
         super(MyEventHandler, self).on_created(event)
 
         #Check if this file has already been analyzed...sometimes Watchdog/Saturn bugs out, and suddenly sees all of the 
@@ -44,26 +52,30 @@ class MyEventHandler(PatternMatchingEventHandler):
         if event.src_path not in self.already_created:
             self.already_created.append(event.src_path)
             logging.info("%s created." % event.src_path)
-            #Calculate shift from master image (for guiding purposes). 
-
+    
             #Search for a matching maser_dark file.
+            #If no match is found, use the master dark with the closest exposure time.
             exptime = fits.open(directory+filename)[0].header['EXPTIME']
-            dark_path = calibration_path+'Darks/master_dark_'+str(exptime)+'.fits'
-            if os.path.isfile(dark_path):
-                dark = fits.open(dark_path)[0].data
-            else:
-                print('No master_dark file found matching the exposure time of '+str(exptime)+' seconds in '+calibration_path+'.')
-                print('You need to make one!')
+            dark_glob = glob(calibration_path+'Darks/*.fits')
+            dark_exptimes = np.array([float(i.split('/')[-1].split('_')[-1].split('.fits')[0]) for i in dark_glob])
+            closest_dark_exptime_ind = np.where(abs(exptime-dark_exptimes) == np.min(abs(exptime-dark_exptimes)))[0][0]
+            dark_path = dark_glob[closest_dark_exptime_ind]
+            if np.min(abs(exptime-dark_exptimes)) != 0:
+                print('No master dark exists in {} with a {}-s exposure time!'.format(calibration_path, exptime))
+                print('Using the closest existing master dark with a {}-s exposure time.'.format(dark_exptimes[closest_dark_exptime_ind]))
+            dark = fits.open(dark_path)[0].data
+
             if exptime >= 1:
+                #Calculate shift from master image (for guiding purposes).
                 (x_shift,y_shift,x_seeing,y_seeing) = image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfinder_fwhm, directory=directory,filename=filename)
             else:
-                print('EXPTIME < 1, not measuring shifts.')
+                print('EXPTIME < 1, not measuring shifts.\n')
                 x_shift = 0
                 y_shift = 0
                 x_seeing = 0
                 y_seeing = 0
             #print('Logging.')
-            PINES_logger(x_shift,y_shift,x_seeing,y_seeing,master_coordinates,lines,directory=directory,filename=filename, mode='created')
+            PINES_logger(x_shift,y_shift,x_seeing,y_seeing,master_coordinates,lines,directory=directory,filename=filename)
             
             #To speed things up, PINES_guide.tcl will read average x/y shifts every three images, without having to wait for watchdog to analyze things. 
             log_filename = directory+directory.split('/')[-2]+'_log.txt'
@@ -79,6 +91,7 @@ class MyEventHandler(PatternMatchingEventHandler):
                     f.write('0 0')
             else:
                 #Otherwise, write the median of the last three shifts in x/y to image_shift.txt.
+                #These measurements are in PIXELS.
                 last_three_x = np.array([float(i) for i in df['X shift'][-3:]])
                 last_three_y = np.array([float(i) for i in df['Y shift'][-3:]])
                 
@@ -97,6 +110,7 @@ class MyEventHandler(PatternMatchingEventHandler):
                         f.write('0 0')
                 else:
                     with open(image_shift_filename, 'a') as f:
+                        #Write median values to image_shift.txt in ARCSECONDS.
                         f.write('\n')
                         f.write('{} {}'.format(np.round(med_x_shift*0.579,1), np.round(med_y_shift*0.579,1)))
                             
@@ -116,19 +130,24 @@ class MyEventHandler(PatternMatchingEventHandler):
 
         
     def on_modified(self, event):
-        #Activated when a new test.fits file is written. 
+        #Activated when a new test.fits file is written.
         directory = os.path.dirname(event.src_path)+'/'
         filename = event.src_path.split('/')[-1]
         file_size = os.stat(event.src_path).st_size
-        if (file_size != 0) and (filename == 'test.fits'):
-            #Search for a matching master_dark file. 
+        if (filename == 'test.fits'):
+        #if (file_size != 0) and (filename == 'test.fits'):
+            #Search for a matching master_dark file.
+            #If no match is found, use the master dark with the closest exposure time.
             exptime = fits.open(directory+filename)[0].header['EXPTIME']
-            dark_path = calibration_path+'Darks/master_dark_'+str(exptime)+'.fits'
-            if os.path.isfile(dark_path):
-                dark = fits.open(dark_path)[0].data
-            else:
-                print('No master_dark file found matching the exposure time of '+str(exptime)+' seconds in '+calibration_path+'.')
-                print('You need to make one!')
+            dark_glob = glob(calibration_path+'Darks/*.fits')
+            dark_exptimes = np.array([float(i.split('/')[-1].split('_')[-1].split('.fits')[0]) for i in dark_glob])
+            closest_dark_exptime_ind = np.where(abs(exptime-dark_exptimes) == np.min(abs(exptime-dark_exptimes)))[0][0]
+            dark_path = dark_glob[closest_dark_exptime_ind]
+            if np.min(abs(exptime-dark_exptimes)) != 0:
+                print('No master dark exists in {} with a {}-s exposure time!'.format(calibration_path, exptime))
+                print('Using the closest existing master dark with a {}-s exposure time.'.format(dark_exptimes[closest_dark_exptime_ind]))
+            dark = fits.open(dark_path)[0].data
+
             super(MyEventHandler, self).on_modified(event)
             logging.info("%s modified." % event.src_path)
             #Calculate shift between test and master image. 
@@ -136,7 +155,9 @@ class MyEventHandler(PatternMatchingEventHandler):
                 (x_shift,y_shift,x_seeing,y_seeing) = image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfinder_fwhm, directory=directory,filename=filename)
                 print('')
             else:
-                print('EXPTIME < 1, not measuring shifts.')
+                print('EXPTIME < 1, not measuring shifts.\n')
+            #Delete the test.fits file. This seems to help the OS to recognize new test.fits files when they're written out.
+            os.remove(event.src_path)
 
 
 #By default, point to today's date directory.
@@ -185,8 +206,6 @@ global dark, flat, bpm, calibration_path
 calibration_path = '/Users/obs72/Desktop/PINES_scripts/Calibrations/'
 flat_path = calibration_path+'Flats/master_flat_J.fits'
 flat = fits.open(flat_path)[0].data[0:1024,:]
-###bpm_path = calibration_path+'Bad_pixel_masks/bpm.p'
-###bpm = (1-pickle.load(open(bpm_path,'rb'))).astype('bool')
 bpm_path = calibration_path+'Bad_pixel_masks/bpm.fits'
 bpm = fits.open(bpm_path)[0].data
 
@@ -205,7 +224,11 @@ def PINES_watchdog(date=date_string,seeing=2.3):
     global daostarfinder_fwhm
     daostarfinder_fwhm = seeing*2.355/0.579 
     print('')
-    file_path = '/mimir/data/obs72/' + date + '/'
+    #file_path = '/mimir/data/obs72/' + date + '/'
+    file_path = '/Volumes/data-1/obs72/' + date + '/'
+    #Clear out any existing test.fits files. 
+    if os.path.exists(file_path+'test.fits'):
+        os.remove(file_path+'test.fits')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     watched_dir = os.path.split(file_path)[0]+'/'
     print('Monitoring {watched_dir}'.format(watched_dir=watched_dir),'for new *.fits files.')
