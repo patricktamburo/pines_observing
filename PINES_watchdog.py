@@ -17,6 +17,7 @@ from image_shifting_functions import *
 from logging_functions import *
 import pandas as pd
 from glob import glob
+import shutil
 
 class MyEventHandler(PatternMatchingEventHandler):
     def __init__(self, directory,  *args, **kwargs):
@@ -156,6 +157,8 @@ class MyEventHandler(PatternMatchingEventHandler):
                 print('')
             else:
                 print('EXPTIME < 1, not measuring shifts.\n')
+            #Copy the test.fits file to ~/Desktop/PINES_scripts/test_image/test.fits so that it can be used when making master images.
+            shutil.copy(event.src_path, '/Users/obs72/Desktop/PINES_scripts/test_image/test.fits')
             #Delete the test.fits file. This seems to help the OS to recognize new test.fits files when they're written out.
             os.remove(event.src_path)
 
