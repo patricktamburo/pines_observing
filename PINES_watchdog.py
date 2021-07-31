@@ -33,19 +33,23 @@ class MyEventHandler(PatternMatchingEventHandler):
         #Activated when a new yyyymmdd.###.fits file is written.
         directory = os.path.dirname(event.src_path)+'/'
         filename = event.src_path.split('/')[-1]
+        
         #These lines are needed to force the OS to recognize that a test.fits file has been written out.
         #Without them, things get hung up for >~ 1 minute.
         if filename == 'test.fits':
-            time.sleep(4)
-            im_force_open = fits.open(event.src_path)
-            return
+            while True:
+                try:
+                    im_force_open = fits.open(event.src_path)
+                    return
+                except:
+                    time.sleep(1)
                 
         file_size = os.stat(event.src_path).st_size
         while file_size < 4213440:
            #Let the whole file read out...
             time.sleep(0.1)
             file_size = os.stat(event.src_path).st_size
-    
+        
         super(MyEventHandler, self).on_created(event)
 
         #Check if this file has already been analyzed...sometimes Watchdog/Saturn bugs out, and suddenly sees all of the 
@@ -82,7 +86,7 @@ class MyEventHandler(PatternMatchingEventHandler):
             log_filename = directory+directory.split('/')[-2]+'_log.txt'
             image_shift_filename = directory+'image_shift.txt'
             #Read in the night's log.
-            df = pd.read_csv(log_filename, names=['Filename', 'Date', 'Target', 'Filt.', 'Exptime', 'Airmass', 'X shift', 'Y shift', 'X seeing', 'Y seeing'], comment='#', header=None)
+            df = pd.read_csv(log_filename, names=['Filename', 'Date', 'Target', 'Filt.', 'Exptime', 'Airmass', 'X shift', 'Y shift', 'X seeing', 'Y seeing', 'Post-processing flag', 'Shift quality flag'], comment='#', header=None)
 
             #TODO: This may break if watchdog is running while taking darks/flats, test this behavior.
             #If there are less than three measurements, just append 0s to image_shift.txt. 
@@ -134,7 +138,10 @@ class MyEventHandler(PatternMatchingEventHandler):
         #Activated when a new test.fits file is written.
         directory = os.path.dirname(event.src_path)+'/'
         filename = event.src_path.split('/')[-1]
-        file_size = os.stat(event.src_path).st_size
+        try:
+            file_size = os.stat(event.src_path).st_size
+        except:
+            return
         if (filename == 'test.fits'):
         #if (file_size != 0) and (filename == 'test.fits'):
             #Search for a matching master_dark file.
@@ -227,8 +234,8 @@ def PINES_watchdog(date=date_string,seeing=2.3):
     global daostarfinder_fwhm
     daostarfinder_fwhm = seeing*2.355/0.579 
     print('')
-    #file_path = '/mimir/data/obs72/' + date + '/'
-    file_path = '/Volumes/data-1/obs72/' + date + '/'
+    file_path = '/mimir/data/obs72/' + date + '/'
+    #file_path = '/Volumes/data-1/obs72/' + date + '/'
     #Clear out any existing test.fits files. 
     if os.path.exists(file_path+'test.fits'):
         os.remove(file_path+'test.fits')
