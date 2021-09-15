@@ -118,7 +118,9 @@ proc PINES_domeflat {expt nexp} {
 }
 
 proc PINES_linearity {} {
-    
+  
+  puts "Running PINES_linearity: 1-15 seconds, 1 second intervals, 20 exposures with lamps on, 20 lamps off..."
+
   PINES_domeflat 1.0 20
   PINES_domeflat 2.0 20
   PINES_domeflat 3.0 20
@@ -137,7 +139,7 @@ proc PINES_linearity {} {
 
 }
 
-proc PINES_darks {expt1 expt2 expt3 nexp} {
+proc PINES_darks {expt1 expt2 expt3 expt4 expt5 expt6 nexp} {
 
     set_Dark
 
@@ -155,6 +157,22 @@ proc PINES_darks {expt1 expt2 expt3 nexp} {
 	puts "Acquiring darks..."	    
 	go etime=$expt3 title=dark nexp=$nexp {comment1=} {comment2=}
     }
+
+    if {$expt4 > 0} {
+	puts "Acquiring darks..."	    
+	go etime=$expt4 title=dark nexp=$nexp {comment1=} {comment2=}
+    }
+
+    if {$expt5 > 0} {
+	puts "Acquiring darks..."	    
+	go etime=$expt5 title=dark nexp=$nexp {comment1=} {comment2=}
+    }
+
+    if {$expt6 > 0} {
+	puts "Acquiring darks..."	    
+	go etime=$expt6 title=dark nexp=$nexp {comment1=} {comment2=}
+    }
+
 
     puts "Returning to J-band filter..."
     set_J 
