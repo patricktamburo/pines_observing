@@ -198,6 +198,7 @@ proc PINES_get_date {} {
     set yr [clock format $systemTime -format %Y]
     set mn [clock format $systemTime -format %m]
     set day [clock format $systemTime -format %d]
+    #return 20210728
     return $yr$mn$day
     
 }
@@ -349,11 +350,11 @@ proc PINES_peakup {expt} {
     #set maximum move for peak up in arcseconds
     set limit 300
 
-    #put zeros into old file
-    exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
-
     #take exposure and move tele 3 times, exit for loop is separation is good
     for {set i 0} {$i < 4} {incr i} {
+
+	#put zeros into old file
+	exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
 
 	#save time the file was modified
 	set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
@@ -485,7 +486,7 @@ proc PINES_guide {expt total_time} {
 	if {$current_time > $start_time + $total_time - $expt/2 - 10
 	} then {break}
  
-	# #read output from PINES_watchdog (will be from previous image)
+	# #read output from PINES_watchdog when the file updates
 	set data [PINES_watchdog_get $start_file_time]
 	set d_ra [expr [lindex $data 0]]
 	set d_dec [expr [lindex $data 1]]
@@ -534,6 +535,198 @@ proc PINES_guide {expt total_time} {
 
 }
 
+proc PINES_dither {expt total_time} {
+
+    puts "STARTING PINES_dither..."
+
+    set pines_date [PINES_get_date]
+
+    # set target name to be whatever is in image_shift currently
+    set fid [open /mimir/data/obs72/$pines_date/image_shift.txt r]
+    set text [gets $fid]
+    close $fid
+    set list [split $text " "]
+    set target_name [lindex $list 2]
+ 
+    # #put zeros into old file
+    # exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+
+    # #save time the file was modified
+    # set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+
+    # puts "Taking a test exposure to get target name..."	    
+    # test etime=1 nexp=1 {comment1=} {comment2=}
+
+    # #read output from PINES_watchdog
+    # set data [PINES_watchdog_get $start_file_time]
+    # set d_ra [expr [lindex $data 0]]
+    # set d_dec [expr [lindex $data 1]]
+    # set target_name [lindex $data 2]
+    # set fwhm [lindex $data 3]
+
+    puts [concat "Target name is" $target_name "."]
+
+    #set limits for guiding corrections in arcseconds
+    set upper_limit 15.0
+    set lower_limit 0.5
+
+    #set guiding coefficients
+    #prop of 1.0 is full correction
+    set prop 0.9
+    #turn off integral term for now (set to zero)
+    set integ 0.1 
+    set integrated_ra_error 0.0
+    set integrated_dec_error 0.0
+    
+    #get start time
+    set start_time [ clock seconds ]
+
+    puts [concat "Taking" $expt "second exposures for" $total_time "seconds..."]
+
+    #set index to 1
+    set index 1
+
+    #get current time for while loop
+    set current_time [ clock seconds ]
+
+    #relative positions for dither, assume we start at the master location
+    set new_ra_pos 0.0
+    set new_dec_pos 0.0
+
+    #corrections
+    set ra_correction 0.0
+    set dec_correction 0.0
+
+
+    #start while loop
+    while {$current_time < $start_time + $total_time - 2 * $expt} {
+
+	puts " "
+	puts [concat "Current time is " $current_time]
+
+	# Make a for loop for each dither position
+	
+	for {set i 0} {$i < 4} {incr i} {
+
+	    set old_ra_pos $new_ra_pos	    
+	    set old_dec_pos $new_dec_pos
+	    
+	    #_pos indicates a position relative to the master image
+	    switch $i {
+		0 {
+		    set new_ra_pos -7.5
+		    set new_dec_pos -7.5
+		    set position "Dither Position A"
+		}
+		1 {
+		    set new_ra_pos -7.5
+		    set new_dec_pos +7.5
+		    set position "Dither Position B"
+		}
+
+		2 {
+		    set new_ra_pos +7.5
+		    set new_dec_pos +7.5
+		    set position "Dither Position C"
+
+		}
+		3 {
+		    set new_ra_pos +7.5
+		    set new_dec_pos -7.5
+		    set position "Dither Position D"
+
+		}
+		default {
+		    set new_ra_pos 0
+		    set new_dec_pos 0
+		    set position "Error"
+
+		}
+	    }
+
+	    puts " "
+	    puts [concat "Current time is " $current_time]
+
+	    #Move telescope to position
+	    puts [concat "Moving to " $position ", d_ra = " [expr $new_ra_pos - $old_ra_pos + $ra_correction] ", d_dec = " [expr $new_dec_pos - $old_dec_pos + $dec_correction]]
+	    rmove d_ra=[expr $new_ra_pos - $old_ra_pos + $ra_correction] d_dec=[expr $new_dec_pos - $old_dec_pos + $dec_correction]
+	
+	    #take exposure
+	    puts [concat "Taking exposure for" $expt " at " $position]
+	    go etime=$expt nexp=1 title=$target_name comment1=$position {comment2=}
+
+	    # while watchdog works, put zeros into old file (in case watchdog hanges, won't slew)
+	    exec echo 0.0 0.0 $target_name 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+
+	    #save time the last file was modified immediately after the exposure ends
+	    set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+	    
+	    # read output from PINES_watchdog when the file is modified
+	    set data [PINES_watchdog_get $start_file_time]
+	    set d_ra [expr [lindex $data 0]]
+	    set d_dec [expr [lindex $data 1]]
+	    set target_name [lindex $data 2]
+	    set fwhm [lindex $data 3]
+	    set d_ra_median [lindex $data 4]
+	    set d_dec_median [lindex $data 5]
+
+	    puts [concat "Watchdog suggests: d_ra = " $d_ra ", d_dec = " $d_dec]
+
+	    #add the dither positions to the suggested motion (which would otherwise CORRECT for the dither motion -> bad)
+	    set d_ra [expr $d_ra + $new_ra_pos]
+	    set d_dec [expr $d_dec + $new_dec_pos]
+
+	    puts [concat "Suggested offsets minus dither: d_ra = " $d_ra ", d_dec = " $d_dec]
+	    
+	    set separation [expr sqrt(pow($d_ra,2) + pow($d_dec,2))]
+
+	    #If the separation is within the lower and upper limits, then slew the telescope
+	    if {$separation > $lower_limit && $separation < $upper_limit
+	    } then {
+		set integrated_ra_error [expr $integrated_ra_error + $d_ra]
+		set integrated_dec_error [expr $integrated_dec_error + $d_dec]
+		set ra_correction [expr $prop * $d_ra + $integ * $integrated_ra_error]
+		set dec_correction [expr $prop * $d_dec + $integ * $integrated_dec_error]
+		puts [concat "Calculated correction: d_ra = " $ra_correction ", d_dec = " $dec_correction]		
+	    } else {
+		puts [concat "Offset of"  [expr $d_ra] "," [expr $d_dec] "outside of allowable ranges for guiding."]
+		set ra_correction 0.0
+		set dec_correction 0.0
+	    }
+
+	    #if there was an RA slip, correct the full amount without the prop or integ components
+	    if {[expr abs($d_ra)] > $upper_limit && [expr $d_ra] > -90 && [expr $d_ra] < -40  && [expr abs($d_dec)] < $upper_limit
+	    } then {
+		
+		puts [concat "RA slip detected, moving "  [expr $d_ra ] "," [expr $d_dec] " arcsec..."]
+		rmove d_ra=[expr $d_ra] d_dec=[expr $d_dec]
+	    }
+
+	}       
+	    
+        #get current time
+	set current_time [ clock seconds ]
+
+	#print out time left
+        set time_left [expr $start_time + $total_time - 2*$expt - $current_time ]
+        puts [concat "Time left:" $time_left "seconds..."]
+
+	#increment index
+	incr index
+
+
+    }
+
+    puts " "
+    puts "PINES_dither COMPLETE."
+
+    #Three quarks for muster mark.
+    for {set i 0} {$i < 3} {incr i} {
+	puts \a\a
+	after 300
+    }
+
+}
 
 
 
@@ -648,8 +841,8 @@ proc PINES_group {file start_num peakup_expt time_per_star} {
 
 	if {[expr abs($ha)] > 4.25
 	} then { puts [concat "Hour Angle of" $ha "greater than 4.25. Move not executed."]
-	} elseif { $ha < 0.0 && $dec_deg > 35.0
-	       } then { puts [concat "Target at Hour Angle of" $ha "and Dec of" $dec_deg " degrees, near a restricted postion. Move not executed."]
+	} elseif { $ha < 0.0 && $dec_deg > 43.0
+	       } then { puts [concat "Target at Hour Angle of" $ha "and Dec of" $dec_deg " degrees, near a restricted position. Move not executed."]
 	} else { puts [concat "Moving to" $target "at" $RAhrs $RAmin $RAsec $DECdeg $DECmin $DECsec ", HA =" $ha "hours..."]
 	    
 	    move ra=$RAhrs:$RAmin:$RAsec dec=$DECdeg:$DECmin:$DECsec
