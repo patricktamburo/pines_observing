@@ -346,12 +346,15 @@ proc PINES_peakup {expt} {
     puts "STARTING PINES_peakup..."
 
     set prop 1.0
+    set integ 0.1
+    set integrated_ra_error 0.0
+    set integrated_dec_error 0.0
 
     #set maximum move for peak up in arcseconds
     set limit 300
 
-    #take exposure and move tele 3 times, exit for loop is separation is good
-    for {set i 0} {$i < 4} {incr i} {
+    #take exposure and move tele 4 times, exit for loop is separation is good
+    for {set i 0} {$i < 5} {incr i} {
 
 	#put zeros into old file
 	exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
@@ -381,7 +384,7 @@ proc PINES_peakup {expt} {
 	    break
 	} else {puts [concat "Target" $separation "arcseconds away from master position."]}
 
-	if {$i == 3
+	if {$i == 4
 	} then { puts [concat "PINES_peakup unsuccessful, target" $separation "arcseconds away from master position."]
 	    set success -1
 	    break
@@ -392,8 +395,16 @@ proc PINES_peakup {expt} {
 	if {[expr abs($d_ra)] == 0 && [expr abs($d_dec)] == 0
 	} then {puts "Suggested RA and DEC moves equal to 0. PINES_watchdog likely failed. Move not executed."
 	} elseif { [expr abs($d_ra)] < $limit && [expr abs($d_dec)] < $limit 
-	       } then {concat "Moving telescope" [expr $d_ra * $prop] "arcsec in RA and" [expr $d_ra * $prop] "in DEC..."
-	    rmove d_ra=[expr $d_ra * $prop] d_dec=[expr $d_dec * $prop]	
+	       } then {
+    	    if {$i > 0} then { set integrated_ra_error [expr $integrated_ra_error + $d_ra]
+		set integrated_dec_error [expr $integrated_dec_error + $d_dec]
+	    }	    
+
+	    puts [concat "Moving "  [expr $prop * $d_ra + $integ * $integrated_ra_error] "," [expr $prop * $d_dec + $integ * $integrated_dec_error] " arcsec..."]
+	    rmove d_ra=[expr $prop * $d_ra + $integ * $integrated_ra_error] d_dec=[expr $prop * $d_dec + $integ * $integrated_dec_error]
+
+	    #puts [concat "Moving telescope" [expr $d_ra * $prop] "arcsec in RA and" [expr $d_ra * $prop] "in DEC..."]
+	    #rmove d_ra=[expr $d_ra * $prop] d_dec=[expr $d_dec * $prop]	
 	} else {puts [concat "Suggested RA or DEC move greater than" $limit "arcsec limit. Move not executed."]}
     }
 
@@ -528,7 +539,7 @@ proc PINES_guide {expt total_time} {
     puts "PINES_guide COMPLETE."
 
     #Three quarks for muster mark.
-    for {set i 0} {$i < 3} {incr i} {
+    for {set i 0} {$i < 9} {incr i} {
 	puts \a\a
 	after 300
     }

@@ -185,29 +185,40 @@ else:
 date_string = str(ut_date.year)+month_string+day_string
 
 #Read in list of master images.
-file = open('input_file.txt', 'r')
+#file = open('input_file.txt', 'r')
 global lines, master_coordinates
-lines = file.readlines()
-file.close()
+#lines = file.readlines()
+#file.close()
 master_coordinates = []
 target_names = []
 
 #Loop over master files and get the telescope coordinates. These will be checked against when a new test.fits image loaded in to figure out
 #   which object you're looking at!
-for i in range(len(lines)):
-    try:
-        master_image_path = Path(lines[i].split(', ')[0])
-        image_header = fits.open(master_image_path)[0].header
-        target_names.append(lines[i].split(', ')[-1].split('\n')[0])
-        #Grab image coordinates of master images. When a new image is read in, its coordinates will be compared against this list. The coordinates
-        #that most closely match the check image's coordinates is chosen as appropriate the master image. 
-        #Convert coordinates to decimal
-        ra  = [float(i) for i in image_header['TELRA'].split(':')]
-        dec = [float(i) for i in image_header['TELDEC'].split(':')]
-        master_coordinates.append((15*ra[0]+15*ra[1]/60+15*ra[2]/3600, dec[0]+dec[1]/60+dec[2]/3600))
-    except:
-        print(lines[i],' no longer on disk.')
-        print('')
+#for i in range(len(lines)):
+#    try:
+#        master_image_path = Path(lines[i].split(', ')[0])
+#        image_header = fits.open(master_image_path)[0].header
+#        target_names.append(lines[i].split(', ')[-1].split('\n')[0])
+#        #Grab image coordinates of master images. When a new image is read in, its coordinates will be compared against this list.
+#        #Convert coordinates to decimal
+#        ra  = [float(i) for i in image_header['TELRA'].split(':')]
+#        dec = [float(i) for i in image_header['TELDEC'].split(':')]
+#        master_coordinates.append((15*ra[0]+15*ra[1]/60+15*ra[2]/3600, dec[0]+dec[1]/60+dec[2]/3600))
+#    except:
+#        print(lines[i],' no longer on disk.')
+#        print('')
+
+#Get coordinates in master synthetic image headers. When a new image is read in, its coordinates will be compared against this list. 
+#The master image with coordinates closest to the coordinates of the image will be chosen as the master image for the field in question. 
+master_image_path = '/Users/obs72/Desktop/PINES_scripts/master_images/'
+master_synthetic_images = np.array(glob(master_image_path+'*master_synthetic.fits'))
+for i in range(len(master_synthetic_images)):
+    header = fits.open(master_synthetic_images[i])[0].header
+    target_names.append('2MASS J'+master_synthetic_images[i].split('/')[-1].split('J')[1].split('_')[0])
+    ra = [float(i) for i in header['TELRA'].split(':')]
+    dec = [float(i) for i in header['TELDEC'].split(':')]
+    master_coordinates.append((15*ra[0]+15*ra[1]/60+15*ra[2]/3600, dec[0]+dec[1]/60+dec[2]/3600))
+
 print('')
 print('~/Desktop/PINES_scripts/master_images/ has masters for ',len(master_coordinates),' targets.')
 
@@ -219,7 +230,7 @@ flat = fits.open(flat_path)[0].data[0:1024,:]
 bpm_path = calibration_path+'Bad_pixel_masks/bpm.fits'
 bpm = fits.open(bpm_path)[0].data
 
-def PINES_watchdog(date=date_string,seeing=2.3):
+def PINES_watchdog(date=date_string,seeing=2.5):
     '''PURPOSE:
             Monitors a data directory for new .fits images. 
         INPUTS:

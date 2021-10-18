@@ -100,12 +100,12 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     
     
     #Cut sources in the lower left, if bars are present.
-    use_ll =  np.where((x_centroids > 512/binning_factor) | (y_centroids > 512/binning_factor))
-    x_centroids  = x_centroids [use_ll]
-    y_centroids  = y_centroids [use_ll]
-    sharpness = sharpness[use_ll]
-    fluxes = fluxes[use_ll]
-    peaks = peaks[use_ll]
+    #use_ll =  np.where((x_centroids > 512/binning_factor) | (y_centroids > 512/binning_factor))
+    #x_centroids  = x_centroids [use_ll]
+    #y_centroids  = y_centroids [use_ll]
+    #sharpness = sharpness[use_ll]
+    #fluxes = fluxes[use_ll]
+    #peaks = peaks[use_ll]
     
     #Finally, cut targets whose y centroids are near y = 512 (in full-res images). These are usually bad.
     use_512 = np.where(np.logical_or((y_centroids < 510/binning_factor),(y_centroids > 514/binning_factor)))[0]
@@ -114,6 +114,15 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     sharpness = sharpness[use_512]
     fluxes = fluxes[use_512]
     peaks = peaks[use_512]
+
+    #Cut sources with negative/highly saturated peaks
+    use_peaks = np.where((peaks > 30) & (peaks < 7000))[0]
+    x_centroids  = x_centroids [use_peaks]
+    y_centroids  = y_centroids [use_peaks]
+    sharpness = sharpness[use_peaks]
+    fluxes = fluxes[use_peaks]
+    peaks = peaks[use_peaks]
+
 
     if len(peaks) > 15: #Take the 15 brightest.
         brightest = np.argsort(peaks)[::-1][0:15]
@@ -214,8 +223,12 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
     distances = np.sqrt((master_ra-check_ra)**2+(master_dec-check_dec)**2)
     min_distance_loc = np.where(distances == min(distances))[0][0]
     if distances[min_distance_loc] > 1:
-        print('Warning: Current pointing off by > 1 degree of closest master image. Are you pointed in the right place?')
-
+        print('Current pointing off by > 1 degree of closest master image. Not measuring shifts/seeing.')
+        x_shift = 'nan'
+        y_shift = 'nan'
+        x_seeing = 'nan'
+        y_seeing = 'nan'
+        return x_shift,y_shift,x_seeing,y_seeing
     master_path = Path(lines[min_distance_loc].split(', ')[0])
     target_name = lines[min_distance_loc].split(', ')[1].split('\n')[0]
     trimmed_target_name = target_name.replace(' ','')
@@ -309,8 +322,8 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
         y_seeing = 'nan'
         
     #Make sure large shifts aren't reported.
-    if (abs(x_shift) > 200) or (abs(y_shift) > 200):
-        print('Image shift larger than 200 pixels measured in at least one dimension. Returning zeros, inspect manually!')
+    if (abs(x_shift) > 500) or (abs(y_shift) > 500):
+        print('Image shift larger than 500 pixels measured in at least one dimension. Returning zeros, inspect manually!')
         f = open(directory+'image_shift.txt','w')
         x_shift = 'nan'
         y_shift = 'nan'
@@ -336,6 +349,7 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
         print('Measured (RA shift, Dec shift): ',ang_shift_string)
         print('Measured (X seeing, Y seeing):  ',seeing_string)
         f = open(directory+'image_shift.txt','w')
+        #Write measured shifts in arcseconds to file.
         f.write(str(ra_shift)+' '+str(dec_shift)+' '+trimmed_target_name+' '+str(max_seeing))
         f.close()
 

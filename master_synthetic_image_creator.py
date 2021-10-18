@@ -59,12 +59,12 @@ def master_synthetic_image_creator(target, seeing=2.5):
         peaks = peaks[use_sharp]
 
         #Cut sources in the lower left, if bars are present.
-        use_ll =  np.where((x_centroids > 512) | (y_centroids > 512))
-        x_centroids  = x_centroids [use_ll]
-        y_centroids  = y_centroids [use_ll]
-        sharpness = sharpness[use_ll]
-        fluxes = fluxes[use_ll]
-        peaks = peaks[use_ll]
+        #use_ll =  np.where((x_centroids > 512) | (y_centroids > 512))
+        #x_centroids  = x_centroids [use_ll]
+        #y_centroids  = y_centroids [use_ll]
+        #sharpness = sharpness[use_ll]
+        #fluxes = fluxes[use_ll]
+        #peaks = peaks[use_ll]
         
         #Cut targets whose y centroids are near y = 512. These are usually bad.
         use_512 = np.where(np.logical_or((y_centroids < 510),(y_centroids > 514)))[0]
@@ -75,7 +75,7 @@ def master_synthetic_image_creator(target, seeing=2.5):
         peaks = peaks[use_512]
 
         #Cut sources with negative/saturated peaks
-        use_peaks = np.where((peaks > 30) & (peaks < 3000))[0]
+        use_peaks = np.where((peaks > 30) & (peaks < 7000))[0]
         x_centroids  = x_centroids [use_peaks]
         y_centroids  = y_centroids [use_peaks]
         sharpness = sharpness[use_peaks]
@@ -93,8 +93,12 @@ def master_synthetic_image_creator(target, seeing=2.5):
         bad_source_locs = np.where(phot_table['aperture_sum'] < cutoff)
         phot_table.remove_rows(bad_source_locs)
         
-        x_centroids = phot_table['xcenter'].value
-        y_centroids = phot_table['ycenter'].value
+        if len(phot_table) > 100:
+            x_centroids = phot_table['xcenter'].value[-101:-1]
+            y_centroids = phot_table['ycenter'].value[-101:-1]
+        else:
+            x_centroids = phot_table['xcenter'].value
+            y_centroids = phot_table['ycenter'].value
 
         return(x_centroids,y_centroids)
 
@@ -137,6 +141,7 @@ def master_synthetic_image_creator(target, seeing=2.5):
     target_path = '/Users/obs72/Desktop/PINES_scripts/master_images/'+target+'_master.fits'
     shutil.copyfile(test_path, target_path)
 
+    
     file_path = '/Users/obs72/Desktop/PINES_scripts/master_images/'+target+'_master.fits'
     calibration_path = '/Users/obs72/Desktop/PINES_scripts/Calibrations/'
 
@@ -167,6 +172,10 @@ def master_synthetic_image_creator(target, seeing=2.5):
 
     avg,med,std = sigma_clipped_stats(image)
 
+    #Save reduced image to test_image for inspection
+    hdu_reduced = fits.PrimaryHDU(image)
+    hdu_reduced.writeto('/Users/obs72/Desktop/PINES_scripts/test_image/master_reduced.fits')
+    
     #Find sources in the image. 
     (x_centroids,y_centroids) = mimir_source_finder(image,sigma_above_bg=5,fwhm=daostarfinder_fwhm)
 
@@ -212,7 +221,7 @@ def master_synthetic_image_creator(target, seeing=2.5):
     print('')
     print('')
     #Now write to a master synthetic image.fits file.
-    hdu = fits.PrimaryHDU(synthetic_image)
+    hdu = fits.PrimaryHDU(synthetic_image, header=header)
     if os.path.exists('master_images/'+target+'_master_synthetic.fits'):
         ans = input('Master image already exists for target, type y to overwrite. ')
         if ans == 'y':
