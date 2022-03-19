@@ -76,9 +76,9 @@ while True:
         plot_data = plt.imshow(reduced_image, origin='lower', norm=norm)
         cb = plt.colorbar(plot_data)
         cb.set_label('ADU', fontsize=16)
-        plt.title('test.fits, UT{}'.format(date), fontsize=16)
+        plt.title('test.fits, UT {}'.format(date), fontsize=16)
         plt.tight_layout()
-        plt.pause(0.2)
+        plt.pause(header['EXPTIME']+3)
 
         
         test_mtime = loop_mtime
@@ -116,9 +116,9 @@ while True:
         plot_data = plt.imshow(reduced_image, origin='lower', norm=norm)
         cb = plt.colorbar(plot_data)
         cb.set_label('ADU', fontsize=16)
-        plt.title(header['FILENAME']+', UT{}'.format(date), fontsize=16)
+        plt.title(header['FILENAME']+', UT {}'.format(date), fontsize=16)
         plt.tight_layout()
-        plt.pause(0.2)
+        plt.pause(header['EXPTIME']+3)
         fits_files = loop_files
     time.sleep(sleep_time)
     #print('watching...')

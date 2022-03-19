@@ -10,6 +10,7 @@ from astropy.modeling import models, fitting
 from astropy.io import fits
 from photutils import DAOStarFinder, aperture_photometry, CircularAperture, Background2D, MedianBackground
 from astropy.stats import sigma_clipped_stats, SigmaClip
+from astropy.visualization import ImageNormalize, ZScaleInterval
 import pickle 
 from pathlib import Path
 import os 
@@ -19,7 +20,7 @@ import shutil
 import sys
 from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 
-def master_synthetic_image_creator(target, seeing=2.5):
+def master_synthetic_image_creator(target, seeing=''):
 
     def mimir_source_finder(image_path,sigma_above_bg,fwhm):
         """Find sources in Mimir images."""
@@ -67,7 +68,7 @@ def master_synthetic_image_creator(target, seeing=2.5):
         #peaks = peaks[use_ll]
         
         #Cut targets whose y centroids are near y = 512. These are usually bad.
-        use_512 = np.where(np.logical_or((y_centroids < 510),(y_centroids > 514)))[0]
+        use_512 = np.where(np.logical_or((y_centroids < 509),(y_centroids > 515)))[0]
         x_centroids  = x_centroids [use_512]
         y_centroids  = y_centroids [use_512]
         sharpness = sharpness[use_512]
@@ -93,9 +94,9 @@ def master_synthetic_image_creator(target, seeing=2.5):
         bad_source_locs = np.where(phot_table['aperture_sum'] < cutoff)
         phot_table.remove_rows(bad_source_locs)
         
-        if len(phot_table) > 100:
-            x_centroids = phot_table['xcenter'].value[-101:-1]
-            y_centroids = phot_table['ycenter'].value[-101:-1]
+        if len(phot_table) > 15:
+            x_centroids = phot_table['xcenter'].value[-16:-1]
+            y_centroids = phot_table['ycenter'].value[-16:-1]
         else:
             x_centroids = phot_table['xcenter'].value
             y_centroids = phot_table['ycenter'].value
@@ -115,12 +116,65 @@ def master_synthetic_image_creator(target, seeing=2.5):
             synthetic_image[y_cut,x_cut] += np.exp(-((dist)**2/(2*sigma**2)+((dist)**2/(2*sigma**2))))
         return(synthetic_image)
     
+    def auto_correlation_seeing(im, cutout_w=15):
+    
+        plate_scale = 0.579 #arcsec/pix
+        sigma_to_fwhm = 2.355
+    
+        #Set a row to NaNs, which will dominate the autocorrelation of Mimir images.
+        im[513] = np.nan
+    
+        #Interpolate nans in the image, repeating until no nans remain.
+        while sum(sum(np.isnan(im))) > 0:
+            im = interpolate_replace_nans(im, kernel=Gaussian2DKernel(0.5))
+
+        #Cut 80 pixels near top/bottom edges, which can dominate the fft if they have a "ski jump" feature.
+        im = im[80:944, :]
+        y_dim, x_dim = im.shape
+    
+        #Subtract off a simple estimate of the image background.
+        im -= sigma_clipped_stats(im)[1]
+
+        #Do auto correlation
+        fft = signal.fftconvolve(im, im[::-1, ::-1], mode='same')
+    
+        #Do a cutout around the center of the fft.
+        cutout = fft[int(y_dim/2)-cutout_w:int(y_dim/2)+cutout_w,int(x_dim/2)-cutout_w:int(x_dim/2)+cutout_w]
+    
+        #Set the midplane of the cutout to nans and interpolate.
+        cutout[cutout_w] = np.nan
+    
+        while sum(sum(np.isnan(cutout))) > 0:
+            cutout = interpolate_replace_nans(cutout, Gaussian2DKernel(0.25))
+
+        #Subtract off "background"
+        cutout -= np.nanmedian(cutout)
+    
+        #Fit a 2D Gaussian to the cutout
+        #Assume a seeing of 2".7, the average value measured for PINES.
+        g_init = models.Gaussian2D(amplitude=np.nanmax(cutout), x_mean=cutout_w, y_mean=cutout_w, x_stddev=2.7/plate_scale/sigma_to_fwhm*np.sqrt(2), y_stddev=2.7/plate_scale/sigma_to_fwhm*np.sqrt(2))
+        g_init.x_mean.fixed = True
+        g_init.y_mean.fixed = True
+        #Set limits on the fitted gaussians between 1".6 and 7".0
+        #Factor of sqrt(2) corrects for autocorrelation of 2 gaussians.
+        g_init.x_stddev.min = 1.6/plate_scale/sigma_to_fwhm*np.sqrt(2)
+        g_init.y_stddev.min = 1.6/plate_scale/sigma_to_fwhm*np.sqrt(2)
+        g_init.x_stddev.max = 7/plate_scale/sigma_to_fwhm*np.sqrt(2)
+        g_init.y_stddev.max = 7/plate_scale/sigma_to_fwhm*np.sqrt(2)
+    
+        fit_g = fitting.LevMarLSQFitter()
+        y, x = np.mgrid[:int(2*cutout_w), :int(2*cutout_w)]
+        g = fit_g(g_init, x, y, cutout)
+    
+        #Convert to fwhm in arcsec.
+        seeing_fwhm_as = g.y_stddev.value/np.sqrt(2)*sigma_to_fwhm*plate_scale
+    
+        return seeing_fwhm_as
+    
     plt.ion()
 
     target = target.replace(' ','')
-    seeing = float(seeing)
-    daostarfinder_fwhm = seeing*2.355/0.579
-
+    
     #By default, point to today's date directory.
     ut_date = datetime.datetime.utcnow()
     if ut_date.month < 10:
@@ -163,6 +217,19 @@ def master_synthetic_image_creator(target, seeing=2.5):
     kernel = Gaussian2DKernel(x_stddev=1)
     image = interpolate_replace_nans(image, kernel)
 
+
+    if seeing == '':
+        seeing = auto_correlation_seeing(image)
+    else:
+        seeing = float(seeing)
+        #old code had a 2.355 factor. PSM thinks this is a bug
+        #daostarfinder_fwhm = seeing*2.355/0.579
+
+        #new code removes 2.355 factor
+
+    print('Using seeing FWHM = {:1.1f}" to detect sources'.format(seeing))
+    daostarfinder_fwhm = seeing/0.579
+
     #Do a simple 2d background model. 
     box_size=32
     sigma_clip = SigmaClip(sigma=3.)
@@ -173,15 +240,16 @@ def master_synthetic_image_creator(target, seeing=2.5):
     avg,med,std = sigma_clipped_stats(image)
 
     #Save reduced image to test_image for inspection
-    hdu_reduced = fits.PrimaryHDU(image)
-    hdu_reduced.writeto('/Users/obs72/Desktop/PINES_scripts/test_image/master_reduced.fits')
+    # hdu_reduced = fits.PrimaryHDU(image)
+    # hdu_reduced.writeto('/Users/obs72/Desktop/PINES_scripts/test_image/master_reduced.fits',overwrite=True)
     
     #Find sources in the image. 
     (x_centroids,y_centroids) = mimir_source_finder(image,sigma_above_bg=5,fwhm=daostarfinder_fwhm)
 
     #Plot the field with detected sources. 
     plt.figure(figsize=(9,9))
-    plt.imshow(image,origin='lower',vmin=med,vmax=med+4*std)
+    norm = ImageNormalize(image, interval=ZScaleInterval())
+    plt.imshow(image,origin='lower',norm=norm)
     plt.plot(x_centroids,y_centroids,'rx')
     for i in range(len(x_centroids)):
         plt.text(x_centroids[i]+8,y_centroids[i]+8,str(i),color='r', fontsize=14)

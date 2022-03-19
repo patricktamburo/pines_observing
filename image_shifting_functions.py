@@ -18,6 +18,71 @@ from numpy.lib.stride_tricks import as_strided
 from astropy.convolution import Gaussian2DKernel, interpolate_replace_nans
 
 
+def auto_correlation_seeing(image_path, calibration_path, dark, flat, bpm, cutout_w=15):
+    
+    im = fits.open(image_path)[0].data[0:1024,:]
+    
+    #Reduce the image.
+    im = (im - dark) / flat
+    
+    #Interpolate over bad pixels
+    im[np.where(bpm)] = np.nan
+    kernel = Gaussian2DKernel(x_stddev=1)
+    im = interpolate_replace_nans(im, kernel)
+    
+    plate_scale = 0.579 #arcsec/pix
+    sigma_to_fwhm = 2.355
+    
+    #Set a row to NaNs, which will dominate the autocorrelation of Mimir images.
+    im[513] = np.nan
+    
+    #Interpolate nans in the image, repeating until no nans remain.
+    while sum(sum(np.isnan(im))) > 0:
+        im = interpolate_replace_nans(im, kernel=Gaussian2DKernel(0.5))
+
+    #Cut 80 pixels near top/bottom edges, which can dominate the fft if they have a "ski jump" feature.
+    im = im[80:944, :]
+    y_dim, x_dim = im.shape
+    
+    #Subtract off a simple estimate of the image background.
+    im -= sigma_clipped_stats(im)[1]
+
+    #Do auto correlation
+    fft = signal.fftconvolve(im, im[::-1, ::-1], mode='same')
+    
+    #Do a cutout around the center of the fft.
+    cutout = fft[int(y_dim/2)-cutout_w:int(y_dim/2)+cutout_w,int(x_dim/2)-cutout_w:int(x_dim/2)+cutout_w]
+    
+    #Set the midplane of the cutout to nans and interpolate.
+    cutout[cutout_w] = np.nan
+    
+    while sum(sum(np.isnan(cutout))) > 0:
+        cutout = interpolate_replace_nans(cutout, Gaussian2DKernel(0.25))
+    
+    #Subtract off "background"
+    cutout -= np.nanmedian(cutout)
+    
+    #Fit a 2D Gaussian to the cutout
+    #Assume a seeing of 2".7, the average value measured for PINES.
+    g_init = models.Gaussian2D(amplitude=np.nanmax(cutout), x_mean=cutout_w, y_mean=cutout_w, x_stddev=2.7/plate_scale/sigma_to_fwhm*np.sqrt(2), y_stddev=2.7/plate_scale/sigma_to_fwhm*np.sqrt(2))
+    g_init.x_mean.fixed = True
+    g_init.y_mean.fixed = True
+    #Set limits on the fitted gaussians between 1".6 and 7".0
+    #Factor of sqrt(2) corrects for autocorrelation of 2 gaussians.
+    g_init.x_stddev.min = 1.6/plate_scale/sigma_to_fwhm*np.sqrt(2)
+    g_init.y_stddev.min = 1.6/plate_scale/sigma_to_fwhm*np.sqrt(2)
+    g_init.x_stddev.max = 7/plate_scale/sigma_to_fwhm*np.sqrt(2)
+    g_init.y_stddev.max = 7/plate_scale/sigma_to_fwhm*np.sqrt(2)
+    
+    fit_g = fitting.LevMarLSQFitter()
+    y, x = np.mgrid[:int(2*cutout_w), :int(2*cutout_w)]
+    g = fit_g(g_init, x, y, cutout)
+    
+    #Convert to fwhm in arcsec.
+    seeing_fwhm_as = g.y_stddev.value/np.sqrt(2)*sigma_to_fwhm*plate_scale
+    
+    return seeing_fwhm_as
+
 def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg,fwhm):
 
     def strided_rescale(g, bin_fac):
@@ -48,6 +113,10 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     bkg_estimator = MedianBackground()
     bkg = Background2D(image, (box_size, box_size), filter_size=(3, 3), sigma_clip=sigma_clip, bkg_estimator=bkg_estimator)
     image = image - bkg.background
+
+    #Estimate the seeing using a 2d cross correlation
+    #seeing = auto_correlation_seeing(image)
+    #fwhm = seeing / 0.579 #units of pixels
     
     #Lower the image resolution, to save time doing source detection. 
     binning_factor = 2
@@ -64,7 +133,8 @@ def mimir_source_finder(image_path,calibration_path,dark,flat,bpm,sigma_above_bg
     # t2 = time.time()
     # print('Full res time: ',np.round(t2-t1,1))
 
-    #New way: do source detection on half-res image. 
+    #New way: do source detection on half-res image.
+    print(('Using a FWHM of {x:.1f}" for finding sources...').format(x=fwhm * 0.579))
     avg, med, stddev = sigma_clipped_stats(lowres_image,sigma=3.0,maxiters=3) #Previously maxiters = 5!
     daofind = DAOStarFinder(fwhm=fwhm/binning_factor, threshold=sigma_above_bg*stddev,sky=med,ratio=0.9)
     new_sources = daofind(lowres_image)
@@ -193,7 +263,8 @@ def guide_star_seeing(subframe):
     # gaussian, mask = fit_gauss(gaussian_init, x, y, subframe)
     gain = 8.21 #e per ADU
     read_noise = 2.43 #ADU
-    weights = gain / np.sqrt(np.absolute(subframe)*gain + (read_noise*gain)**2) #1/sigma for each pixel
+    #weights = gain / np.sqrt(np.absolute(subframe)*gain + (read_noise*gain)**2) #1/sigma for each pixel
+    weights = 1.0 / np.sqrt(np.absolute(subframe)/gain + read_noise**2) #1/sigma for each pixel
     gaussian, mask = fit_gauss(gaussian_init, x, y, subframe, weights)
     fwhm_x = 2.355*gaussian.x_stddev_1.value
     fwhm_y = 2.355*gaussian.y_stddev_1.value
@@ -212,8 +283,12 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
     check_hdul = fits.open(check_path)
     check_header = check_hdul[0].header
     check_exptime = check_header['EXPTIME']
-    ra  = [float(i) for i in check_header['TELRA'].split(':')]
-    dec = [float(i) for i in check_header['TELDEC'].split(':')]
+    #ra  = [float(i) for i in check_header['TELRA'].split(':')]
+    #dec = [float(i) for i in check_header['TELDEC'].split(':')]
+    #The following change sets the RA and Dec to a default value if it isn't in the header.
+    #This is useful if you take darks with LOIS not connected to MOVE (tele=none on configure)
+    ra  = [float(i) for i in check_header.get('TELRA',default='00:00:00').split(':')]
+    dec = [float(i) for i in check_header.get('TELDEC',default='00:00:00').split(':')]
     check_ra = 15*ra[0]+15*ra[1]/60+15*ra[2]/3600 
     check_dec = dec[0]+dec[1]/60+dec[2]/3600
     master_ra = np.array([master_coordinates[i][0] for i in range(len(master_coordinates))])
@@ -291,29 +366,38 @@ def image_shift_calculator(lines, master_coordinates, dark, flat, bpm, daostarfi
 
     #IF this is a science image, use reference stars to measure FWHM seeing.
     if mode == 'created':
-        guide_star_cut = np.where((check_x_centroids > 50) & (check_x_centroids < 975) & (check_y_centroids > 50) & (check_y_centroids < 975))[0]
-        if len(guide_star_cut) != 0:
-            x_seeing_array = np.array([])
-            y_seeing_array = np.array([])
-            #Loop over the potential guide star positions, make cutouts around those positions, and measure the seeing in the subframes.
-            for guide_star_ind in guide_star_cut:
-                guide_star_x_int = int(check_x_centroids[guide_star_ind])
-                guide_star_y_int = int(check_y_centroids[guide_star_ind])
-                guide_star_subframe = check_image[guide_star_y_int-15:guide_star_y_int+15,guide_star_x_int-15:guide_star_x_int+15]
-                (x_seeing,y_seeing) = guide_star_seeing(guide_star_subframe)
-            
-                #Only use sources with believable seeing measurements.
-                if x_seeing > 0.8 and x_seeing < 5.5:
-                    x_seeing_array = np.append(x_seeing_array,x_seeing)
-                    y_seeing_array = np.append(y_seeing_array,y_seeing)
+        #Generate a seeing estimate using autocorrelation.
+        seeing = auto_correlation_seeing(check_path, calibration_path, dark, flat, bpm)
+        x_seeing = seeing
+        y_seeing = seeing
+        #print('Autocorr seeing: {:1.1f}'.format(seeing))
         
-            print(len(x_seeing_array),"sources used for seeing calc:",np.round(x_seeing_array,2))
-            x_seeing = np.nanmedian(x_seeing_array)
-            y_seeing = np.nanmedian(y_seeing_array)
-        else:
-            print("No sources for seeing calc, returning NaNs.")
-            x_seeing = 'nan'
-            y_seeing = 'nan'
+        #If that gives unrealistic values, check with the original approach: fit 2D gaussians to sources.
+        if (seeing < 1.6) or (seeing > 7) or (np.isnan(seeing)):
+            print('auto_correlation_seeing() failed, reverting to guide_star_seeing()')
+            guide_star_cut = np.where((check_x_centroids > 50) & (check_x_centroids < 975) & (check_y_centroids > 50) & (check_y_centroids < 975))[0]
+            if len(guide_star_cut) != 0:
+                x_seeing_array = np.array([])
+                y_seeing_array = np.array([])
+                #Loop over the potential guide star positions, make cutouts around those positions, and measure the seeing in the subframes.
+                for guide_star_ind in guide_star_cut:
+                    guide_star_x_int = int(check_x_centroids[guide_star_ind])
+                    guide_star_y_int = int(check_y_centroids[guide_star_ind])
+                    guide_star_subframe = check_image[guide_star_y_int-15:guide_star_y_int+15,guide_star_x_int-15:guide_star_x_int+15]
+                    (x_seeing,y_seeing) = guide_star_seeing(guide_star_subframe)
+            
+                    #Only use sources with believable seeing measurements.
+                    if x_seeing > 0.8 and x_seeing < 6.5:
+                        x_seeing_array = np.append(x_seeing_array,x_seeing)
+                        y_seeing_array = np.append(y_seeing_array,y_seeing)
+        
+                print(len(x_seeing_array),"sources used for seeing calc:",np.round(x_seeing_array,2))
+                x_seeing = np.nanmedian(x_seeing_array)
+                y_seeing = np.nanmedian(y_seeing_array)
+            else:
+                print("No sources for seeing calc, returning NaNs.")
+                x_seeing = 'nan'
+                y_seeing = 'nan'
 
     #If it's a test image, skip the seeing measurement to save time.
     elif mode == 'modified':
