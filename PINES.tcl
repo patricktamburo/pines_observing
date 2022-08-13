@@ -117,6 +117,67 @@ proc PINES_domeflat {expt nexp} {
 
 }
 
+proc PINES_JHK_domeflat {J_expt H_expt K_expt nexp} {
+    
+    #turn logging off
+    Logging_OFF
+    
+    for {set i 0} {$i < 3} {incr i} {
+    
+    #turn lights on (should already be on to determine exp times)
+    puts "Turning dome flat lamps on..."
+    domeflat_on
+
+    puts "Waiting 10 seconds for lamp to warm up..."
+    after 10000
+
+    if {$i == 0} {
+	set_J
+	set expt $J_expt
+	puts "Acquiring J-band flats lights on..."	    
+    }
+    if {$i == 1} {
+	set_H
+	set expt $H_expt
+	puts "Acquiring H-band flats lights on..."	    
+    }
+    if {$i == 2} {
+	set_K
+	set expt $K_expt
+	puts "Acquiring K-band flats lights on..."	    
+    }
+    
+    go etime=$expt title=dome_lamp_on nexp=$nexp {comment1=} {comment2=}
+    
+    #turn lights off
+    domeflat_off
+
+    puts "Flats lamp off."	    
+
+    puts "Waiting 10 seconds for lamp to cool down..."
+    after 10000
+    
+    puts "Acquiring lamps off exposures..."
+    go etime=$expt title=dome_lamp_off nexp=$nexp {comment1=} {comment2=}    
+
+    }
+
+    #take a test to reset the nexp and comments
+    puts "Taking a test exposure to reset comments..."	    
+    test etime=0 nexp=1 title= {comment1=} {comment2=}
+
+    puts "PINES_JHK_domeflat COMPLETE."
+
+    #Three quarks for muster mark.
+    for {set i 0} {$i < 3} {incr i} {
+	puts \a\a
+	after 300
+    }
+
+
+}
+
+
 proc PINES_linearity {} {
   
   puts "Running PINES_linearity: 1-15 seconds, 1 second intervals, 20 exposures with lamps on, 20 lamps off..."
@@ -176,6 +237,10 @@ proc PINES_darks {expt1 expt2 expt3 expt4 expt5 expt6 nexp} {
 
     puts "Returning to J-band filter..."
     set_J 
+
+    #take a test to reset the nexp and comments
+    puts "Taking a test exposure to reset comments..."	    
+    test etime=0 nexp=1 title= {comment1=} {comment2=}
 
     puts "PINES_darks complete."
 
@@ -473,6 +538,11 @@ proc PINES_guide {expt total_time} {
     #get current time for while loop
     set current_time [ clock seconds ]
 
+    #turn off display, telescope updates and logging to save time
+    display_off
+    set tmsg [ catch { Tele_Gui_OFF } ]
+    Logging_OFF
+
     #start while loop
     while {$current_time < $start_time + $total_time - $expt/2} {
 
@@ -536,6 +606,12 @@ proc PINES_guide {expt total_time} {
 	incr index
     }
 
+    #turn display, telescope updates and logging back on
+    display_on
+    set tmsg [ catch { Tele_Gui_ON } result ]
+    Logging_ON
+
+
     puts "PINES_guide COMPLETE."
 
     #Three quarks for muster mark.
@@ -545,6 +621,169 @@ proc PINES_guide {expt total_time} {
     }
 
 }
+
+proc PINES_JHK {expt_J nexp_J expt_H nexp_H expt_K nexp_K total_time} {
+
+    puts "STARTING PINES_JHK..."
+
+    set pines_date [PINES_get_date]
+
+    # set target name to be whatever is in image_shift currently
+    set fid [open /mimir/data/obs72/$pines_date/image_shift.txt r]
+    set text [gets $fid]
+    close $fid
+    set list [split $text " "]
+    set target_name [lindex $list 2]
+ 
+    # #put zeros into old file
+    # exec echo 0.0 0.0 dummy 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+
+    # #save time the file was modified
+    # set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+
+    # puts "Taking a test exposure to get target name..."	    
+    # test etime=1 nexp=1 {comment1=} {comment2=}
+
+    # #read output from PINES_watchdog
+    # set data [PINES_watchdog_get $start_file_time]
+    # set d_ra [expr [lindex $data 0]]
+    # set d_dec [expr [lindex $data 1]]
+    # set target_name [lindex $data 2]
+    # set fwhm [lindex $data 3]
+
+    puts [concat "Target name is" $target_name "."]
+
+    #set limits for guiding corrections in arcseconds
+    set upper_limit 10.0
+    set lower_limit 0.5
+
+    #set guiding coefficients
+    set prop 1.0
+    set integ 0.1
+    set integrated_ra_error 0.0
+    set integrated_dec_error 0.0
+    
+    #get start time
+    set start_time [ clock seconds ]
+
+    #puts [concat "Taking" $expt "second exposures for" $total_time "seconds..."]
+
+    #set index to 0
+    set index 0
+
+    #get current time for while loop
+    set current_time [ clock seconds ]
+
+    #turn off display, telescope updates and logging to save time
+    display_off
+    set tmsg [ catch { Tele_Gui_OFF } ]
+    Logging_OFF
+
+
+    #start while loop, continue until time elapses and a full cycle completes
+    while {($current_time < $start_time + $total_time) || ($index % ($nexp_J+$nexp_H+$nexp_K) != 0) } {
+
+        # #put zeros into old file (in case watchdog hanges, won't slew)
+        # exec echo 0.0 0.0 $target_name 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+        # #save time the file was modified
+        # set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+
+	# if {[expr $index % 3] == 0} then {set_J}
+	# if {[expr $index % 3] == 1} then {set_H}
+	# if {[expr $index % 3] == 2} then {set_K}
+
+	# if {[expr $index/$nexp % 3] == 0} then {set_J}
+	# if {[expr $index/$nexp % 3] == 1} then {set_H}
+	# if {[expr $index/$nexp % 3] == 2} then {set_K}
+
+	if {[expr $index % ($nexp_J+$nexp_H+$nexp_K)] == 0} then {
+	    set_J
+	    set expt [expr $expt_J]
+	    set nexps [expr $nexp_J] } 
+	if {[expr $index % ($nexp_J+$nexp_H+$nexp_K)] == $nexp_J} then {
+	    set_H
+	    set expt [expr $expt_H] 
+	    set nexps [expr $nexp_H] }
+	if {[expr $index % ($nexp_J+$nexp_H+$nexp_K)] == [expr ($nexp_J+$nexp_H)]} then {
+	    set_K
+	    set expt [expr $expt_K] 
+	    set nexps [expr $nexp_K] }
+        # if there is a problem here, check expr, formatting may not be correct
+
+
+
+	#take exposure
+	puts [concat "Taking exposure for" $expt "seconds"]
+        go etime=$expt nexp=nexps title=$target_name {comment1=} {comment2=}
+#set nexp for each band in chunk of text above and then set nexp=nexpbeforeguide. If you make this change, you need to change incr index (last line) to be something like set index [expr ($index+10)]
+        # #put zeros into old file (in case watchdog hanges, won't slew)
+        exec echo 0.0 0.0 $target_name 0.0 > /mimir/data/obs72/$pines_date/image_shift.txt
+
+        #save time the last file was modified immediately after the exposure ends
+        set start_file_time [file mtime /mimir/data/obs72/$pines_date/image_shift.txt]
+
+        #get current time
+	set current_time [ clock seconds ]
+ 
+	# #read output from PINES_watchdog when the file updates
+	set data [PINES_watchdog_get $start_file_time]
+	set d_ra [expr [lindex $data 0]]
+	set d_dec [expr [lindex $data 1]]
+	set target_name [lindex $data 2]
+	set fwhm [lindex $data 3]
+	set d_ra_median [lindex $data 4]
+	set d_dec_median [lindex $data 5]
+
+	set separation [expr sqrt(pow($d_ra,2) + pow($d_dec,2))]
+
+	#If the separation is within the lower and upper limits, then slew the telescope
+	if {$separation > $lower_limit && $separation < $upper_limit
+	} then {
+	    set integrated_ra_error [expr $integrated_ra_error + $d_ra]
+	    set integrated_dec_error [expr $integrated_dec_error + $d_dec]	    
+	    puts [concat "Moving "  [expr $prop * $d_ra + $integ * $integrated_ra_error] "," [expr $prop * $d_dec + $integ * $integrated_dec_error] " arcsec..."]
+	    rmove d_ra=[expr $prop * $d_ra + $integ * $integrated_ra_error] d_dec=[expr $prop * $d_dec + $integ * $integrated_dec_error]
+	} else {puts [concat "Offset of"  [expr $d_ra] "," [expr $d_dec] "outside of allowable ranges for guiding."]}
+
+	#if there was an RA slip, correct the full amount without the prop of integ components
+	if {[expr abs($d_ra)] > $upper_limit && [expr $d_ra] > -90 && [expr $d_ra] < -40  && [expr abs($d_dec_median)] < $upper_limit
+	} then {
+	    
+	    puts [concat "RA slip detected, moving "  [expr $d_ra ] "," [expr $d_dec] " arcsec..."]
+	    rmove d_ra=[expr $d_ra] d_dec=[expr $d_dec]
+	}
+
+        #get current time
+	set current_time [ clock seconds ]
+
+	#print out time left
+        set time_left [expr $start_time + $total_time - $current_time ]
+        puts [concat "Time left:" $time_left "seconds..."]
+
+	#increment index
+	set index [expr ($index+1)]
+    }
+
+    puts "Setting filter back to J"
+    set_J
+
+    #turn display, telescope updates and logging back on
+    display_on
+    set tmsg [ catch { Tele_Gui_ON } result ]
+    Logging_ON
+
+
+    puts "PINES_JHK COMPLETE."
+
+    #Three quarks for muster mark.
+    for {set i 0} {$i < 9} {incr i} {
+	puts \a\a
+	after 300
+    }
+
+}
+
+
 
 proc PINES_dither {expt total_time} {
 
@@ -779,17 +1018,89 @@ proc PINES_lst {} {
 
     set theta [expr [lindex $c 0] + ([lindex $c 1] * $t0) + pow($t,2)*([lindex $c 2] - $t / [lindex $c 3])]
 
-    set lst [expr ($theta + $lng) / 15.0]
+    set angle [expr ($theta + $lng) / 15.0]
 
-    set lst [expr ([expr int($lst * 1000)] % 24000)/1000.0]
+    set lst [expr ([expr int($angle * 1000)] % 24000)/1000.0]
     
     puts [concat "LST=" $lst]
 
     return $lst
 }
 
+#program to slew to a target in a group.txt file
+proc PINES_slew { file_name target_num } { 
+
+     puts "STARTING PINES_slew..."
+
+     set pines_date [PINES_get_date]
+
+     #set file_name "group.txt"
+
+     puts [concat "Reading group coordinates from" /mimir/data/obs72/$pines_date/$file_name]
+     set fid [open /mimir/data/obs72/$pines_date/$file_name r]
+    
+    set index 0
+    while { [gets $fid line] >= 0 } {
+	set list [split $line " "]
+
+	lappend target_list [lindex $list 0]
+	lappend RAhrs_list [lindex $list 1]
+	lappend RAmin_list [lindex $list 2]
+	lappend RAsec_list [lindex $list 3]
+	lappend DECdeg_list [lindex $list 4]
+	lappend DECmin_list [lindex $list 5]
+	lappend DECsec_list [lindex $list 6]
+	lappend expt_list [lindex $list 7]	
+	lappend index_list $index
+
+	incr index
+    }
+    close $fid
+
+
+
+    set DECdeg [lindex $DECdeg_list $target_num]
+    set DECmin [lindex $DECmin_list $target_num]
+    set DECsec [lindex $DECsec_list $target_num]
+    
+    #make sure the telescope can move to the coordinates
+    #covert sexigessimal to decimal
+    set ra_deg [expr [expr [scan $RAhrs %d]] + [expr [scan $RAmin %d]] / 60.0 + [expr [scan $RAsec %d]] / 3600.0]
+    #for dec, only use degree to avoid sign issues with min and sec
+    set dec_deg [expr [scan $DECdeg %d]]
+
+    #calculate hour angle
+    set ha [expr [PINES_lst] - $ra_deg]
+
+    if {[expr $ha] < -12}
+    then { set ha [expr $ha + 24.0] }
+
+    if {[expr $ha] > 12} 
+    then {set ha [expr $ha - 24.0]}
+
+    if {[expr abs($ha)] > 4.25}
+    then {puts [concat "Hour Angle of" $ha "passed safe limits. Move not executed."]}
+    elseif {$ha < 0.0 && $dec_deg > 45.0}
+    then {puts [concat "Target at Hour Angle of" $ha "and Dec of" $dec_deg " degrees, near a restricted position. Move not executed."] }
+    else { 
+	puts [concat "Moving to" $target "at" $RAhrs $RAmin $RAsec $DECdeg $DECmin $DECsec ", HA =" $ha "hours..."]
+	move ra=$RAhrs:$RAmin:$RAsec dec=$DECdeg:$DECmin:$DECsec
+    }
+
+   puts "PINES_slew COMPLETE."
+
+
+   for {set i 0} {$i < 3} {incr i} {
+       puts \a\a
+       after 300
+   }
+
+
+ }
+
+
 #program to cycle through a group of targets
-proc PINES_group {file start_num peakup_expt time_per_star} {
+proc PINES_group {file_name start_num peakup_expt time_per_star} {
 
     puts "STARTING PINES_group..."
 
@@ -797,8 +1108,8 @@ proc PINES_group {file start_num peakup_expt time_per_star} {
 
     #set group_file_name "group.txt"
 
-    puts [concat "Reading group coordinates from" /mimir/data/obs72/$pines_date/$file]
-    set fid [open /mimir/data/obs72/$pines_date/$file r]
+    puts [concat "Reading group coordinates from" /mimir/data/obs72/$pines_date/$file_name]
+    set fid [open /mimir/data/obs72/$pines_date/$file_name r]
     
     set index 0
     while { [gets $fid line] >= 0 } {
@@ -849,10 +1160,9 @@ proc PINES_group {file start_num peakup_expt time_per_star} {
 	if {[expr $ha] > 12
 	} then { set ha [expr $ha - 24.0] }
 
-
 	if {[expr abs($ha)] > 4.25
 	} then { puts [concat "Hour Angle of" $ha "greater than 4.25. Move not executed."]
-	} elseif { $ha < 0.0 && $dec_deg > 43.0
+	} elseif { $ha < 0.0 && $dec_deg > 45.0
 	       } then { puts [concat "Target at Hour Angle of" $ha "and Dec of" $dec_deg " degrees, near a restricted position. Move not executed."]
 	} else { puts [concat "Moving to" $target "at" $RAhrs $RAmin $RAsec $DECdeg $DECmin $DECsec ", HA =" $ha "hours..."]
 	    
